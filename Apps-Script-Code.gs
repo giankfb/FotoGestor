@@ -233,8 +233,30 @@ function upsertCash_(sourceType, sourceId, tx){
   return record[0];
 }
 function deleteCashBySource_(sourceType, sourceId){ const sh=ss_().getSheetByName('Lancamentos'); if(!sh||sh.getLastRow()<2)return; const vals=sh.getDataRange().getValues(),h=vals[0].map(String),st=h.indexOf('sourceType'),si=h.indexOf('sourceId'); for(let i=vals.length-1;i>=1;i--) if(String(vals[i][st]||'')===sourceType&&String(vals[i][si]||'')===String(sourceId)) sh.deleteRow(i+1); }
-function syncReceiptCash_(item){ const total=Number(item.amount||0); if(total<=0)return; const cashId=upsertCash_('receivable',item.id,{type:'Entrada',date:item.date,description:'Recebimento · '+(item.notes||'Conta a receber'),person:item.person||'',method:item.method||'',amount:total,category:'Contas a receber'}); const sh=ss_().getSheetByName('Recebimentos'); const row=findRowById_('Recebimentos',item.id); if(row>0){const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String),c=h.indexOf('cashTransactionId'); if(c>=0)sh.getRange(row,c+1).setValue(cashId);} }
-function syncPaymentCash_(item){ const total=Number(item.amount||0); if(total<=0)return; const cashId=upsertCash_('payable',item.id,{type:'Saída',date:item.date,description:'Pagamento · '+(item.notes||'Conta a pagar'),person:item.person||'',method:item.method||'',amount:total,category:'Contas a pagar'}); const sh=ss_().getSheetByName('Pagamentos'); const row=findRowById_('Pagamentos',item.id); if(row>0){const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String),c=h.indexOf('cashTransactionId'); if(c>=0)sh.getRange(row,c+1).setValue(cashId);} }
+function lookupAccountPerson_(sheetName, id, personFallback){
+  if(personFallback) return String(personFallback);
+  const sh=ss_().getSheetByName(sheetName); if(!sh || sh.getLastRow()<2) return '';
+  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), idc=h.indexOf('id'), pc=h.indexOf('person');
+  if(idc<0 || pc<0) return '';
+  for(let i=1;i<vals.length;i++) if(String(vals[i][idc]||'')===String(id)) return String(vals[i][pc]||'');
+  return '';
+}
+function syncReceiptCash_(item){
+  const total=Number(item.amount||0); if(total<=0)return;
+  const receivableId=String(item.receivableId||'');
+  const person=lookupAccountPerson_('ContasReceber', receivableId, item.person||'');
+  const cashId=upsertCash_('receivable',item.id,{type:'Entrada',date:item.date,description:'Recebimento · '+(item.notes||'Conta a receber'),person:person,method:item.method||'',amount:total,category:'Contas a receber'});
+  const sh=ss_().getSheetByName('Recebimentos'); const row=findRowById_('Recebimentos',item.id);
+  if(row>0){const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String),c=h.indexOf('cashTransactionId'); if(c>=0)sh.getRange(row,c+1).setValue(cashId);}
+}
+function syncPaymentCash_(item){
+  const total=Number(item.amount||0); if(total<=0)return;
+  const payableId=String(item.payableId||'');
+  const person=lookupAccountPerson_('ContasPagar', payableId, item.person||'');
+  const cashId=upsertCash_('payable',item.id,{type:'Saída',date:item.date,description:'Pagamento · '+(item.notes||'Conta a pagar'),person:person,method:item.method||'',amount:total,category:'Contas a pagar'});
+  const sh=ss_().getSheetByName('Pagamentos'); const row=findRowById_('Pagamentos',item.id);
+  if(row>0){const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String),c=h.indexOf('cashTransactionId'); if(c>=0)sh.getRange(row,c+1).setValue(cashId);}
+}
 function paymentsTotalFor_(payableId){ const sh=ss_().getSheetByName('Pagamentos'); if(!sh||sh.getLastRow()<2)return 0; const vals=sh.getDataRange().getValues(),h=vals[0].map(String),pi=h.indexOf('payableId'),ai=h.indexOf('amount'); return vals.slice(1).reduce((s,r)=>s+(String(r[pi]||'')===String(payableId)?Number(r[ai]||0):0),0); }
 function syncPayableFromPayments_(payableId){ if(!payableId)return; const sh=ss_().getSheetByName('ContasPagar'); if(!sh||sh.getLastRow()<2)return; const vals=sh.getDataRange().getValues(),h=vals[0].map(String),idc=h.indexOf('id'),ac=h.indexOf('amount'),pc=h.indexOf('paid'),sc=h.indexOf('status'),dc=h.indexOf('dueDate'),uc=h.indexOf('updatedAt'); for(let i=1;i<vals.length;i++) if(String(vals[i][idc]||'')===String(payableId)){const total=Number(vals[i][ac]||0),paid=paymentsTotalFor_(payableId),due=dc>=0?normalizeDate_(vals[i][dc]):''; sh.getRange(i+1,pc+1).setValue(paid);sh.getRange(i+1,sc+1).setValue(paid>=total?'Pago':paid>0?'Parcial':(due&&due<todayISO_()?'Vencida':'Pendente'));if(uc>=0)sh.getRange(i+1,uc+1).setValue(new Date());return;} }
 function saveSettings_(obj) { const sh=ss_().getSheetByName('Configuracoes');const vals=sh.getDataRange().getValues();Object.keys(obj).forEach(k=>{let found=-1;for(let i=1;i<vals.length;i++)if(String(vals[i][0])===k){found=i+1;break;}if(found<0)sh.appendRow([k,obj[k]]);else sh.getRange(found,2).setValue(obj[k]);}); }

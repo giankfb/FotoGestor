@@ -1,4 +1,4 @@
-# FotoGestor — Gestor de Fotografia
+# FotoGestor Financeiro V7
 
 Aplicação web React + Vite publicada no GitHub Pages, com Google Apps Script como API e Google Sheets como banco de dados. Este projeto foi separado do AMVF2; não reutilize a planilha nem a URL de Apps Script da associação.
 
