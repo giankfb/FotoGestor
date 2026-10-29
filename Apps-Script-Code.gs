@@ -192,19 +192,33 @@ function saveRow_(sheetName,item,isUpdate) {
   if(sheetName==='Recebimentos') syncReceiptCash_(item, isUpdate);
   if(sheetName==='Pagamentos') syncPayableFromPayments_(item.payableId);
   if(sheetName==='Pagamentos') syncPaymentCash_(item, isUpdate);
-  if(sheetName==='ContasReceber' && item.eventId) syncReceivableFromReceipts_(item.id);
+  if(sheetName==='ContasReceber') syncReceivableFromReceipts_(item.id);
   if(sheetName==='ContasPagar') syncPayableFromPayments_(item.id);
 }
 
 function syncReceivableFromReceipts_(receivableId) {
   if(!receivableId) return;
   const sh=ss_().getSheetByName('ContasReceber'); if(!sh||sh.getLastRow()<2) return;
-  const vals=sh.getDataRange().getValues(), headers=vals[0].map(String), idc=headers.indexOf('id'), amountc=headers.indexOf('amount'), paidc=headers.indexOf('paid'), statusc=headers.indexOf('status'), upd=headers.indexOf('updatedAt');
+  const vals=sh.getDataRange().getValues(), headers=vals[0].map(String), idc=headers.indexOf('id'), amountc=headers.indexOf('amount'), paidc=headers.indexOf('paid'), statusc=headers.indexOf('status'), upd=headers.indexOf('updatedAt'), methodc=headers.indexOf('method');
   for(let i=1;i<vals.length;i++) if(String(vals[i][idc]||'')===String(receivableId)){
     const total=Number(vals[i][amountc]||0), paid=receiptsTotalFor_(receivableId);
     sh.getRange(i+1,paidc+1).setValue(paid);
-    const duec=headers.indexOf('dueDate'); const due=duec>=0?normalizeDate_(vals[i][duec]):''; sh.getRange(i+1,statusc+1).setValue(paid>=total?'Pago':paid>0?'Parcial':(due && due<todayISO_()?'Vencida':'Pendente'));
-    if(upd>=0) sh.getRange(i+1,upd+1).setValue(new Date());
+    // A forma de pagamento da conta é um resumo: usa a forma do recebimento mais recente.
+    if(methodc>=0){
+      const rs=ss_().getSheetByName('Recebimentos');
+      let latestMethod=''; let latestTime=0;
+      if(rs && rs.getLastRow()>1){
+        const rv=rs.getDataRange().getValues(), rh=rv[0].map(String), rid=rh.indexOf('receivableId'), rdate=rh.indexOf('date'), rmethod=rh.indexOf('method');
+        for(let j=1;j<rv.length;j++) if(String(rv[j][rid]||'')===String(receivableId)){
+          const d=String(rv[j][rdate]||''); const t=Date.parse(d)||0;
+          if(t>=latestTime){ latestTime=t; latestMethod=String(rv[j][rmethod]||''); }
+        }
+      }
+      sh.getRange(i+1,methodc+1).setValue(latestMethod);
+    }
+    const duec=headers.indexOf('dueDate'); const due=duec>=0?normalizeDate_(vals[i][duec]):'';
+    sh.getRange(i+1,statusc+1).setValue(paid>=total?'Pago':paid>0?'Parcial':(due && due<todayISO_()?'Vencida':'Pendente'));
+    if(upd>=0)sh.getRange(i+1,upd+1).setValue(new Date());
     return;
   }
 }

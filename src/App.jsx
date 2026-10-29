@@ -622,7 +622,7 @@ function App() {
                     <table>
                       <thead>
                         <tr>
-                          {entities[active].fields.slice(0, 6).map(f => (
+                          {entities[active].fields.slice(0, active === 'transactions' ? 7 : 6).map(f => (
                             <th key={f[0]}>{f[1]}</th>
                           ))}
                           <th>Ações</th>
@@ -631,7 +631,7 @@ function App() {
                       <tbody>
                         {currentItems.map((item, i) => (
                           <tr key={item.id || i}>
-                            {entities[active].fields.slice(0, 6).map(f => (
+                            {entities[active].fields.slice(0, active === 'transactions' ? 7 : 6).map(f => (
                               <td key={f[0]}>
                                 {['amount', 'price', 'value', 'paid'].includes(f[0])
                                   ? money(item[f[0]])
@@ -979,7 +979,7 @@ function PaymentModal({ account, receipts, type='receivable', close, save, remov
   return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&close()}>
     <form className="modal" onSubmit={submit}>
       <div className="modal-head"><div><p className="eyebrow">{label}</p><h2>{account.description || 'Conta'}</h2><small>{account.person || 'Cliente / fornecedor'} · Total {money(account.amount)}</small></div><button type="button" className="icon-btn" onClick={close}><X /></button></div>
-      <div className="panel"><b>Já {type==='payable'?'pago':'recebido'}: {money(received)}</b><br/><span>Saldo pendente: <strong>{money(balance)}</strong></span></div>
+      <div className="panel"><b>Já {type==='payable'?'pago':'recebido'}: {money(received)}</b><br/><span>Saldo pendente: <strong>{money(balance)}</strong></span></div><div className="panel"><small>Os valores e a forma de pagamento abaixo ficam registrados individualmente. Ao editar, o Caixa também é atualizado.</small></div>
       <div className="form-grid">
         <label className="field">Data<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label>
         <label className="field">Valor {type==='payable'?'pago':'recebido'}<input type="number" min="0.01" step="0.01" required value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
