@@ -167,11 +167,11 @@ function normalizeDateValue(value) {
   const text = String(value).trim();
 
   // ISO / Google Sheets: yyyy-mm-dd or yyyy-mm-ddTHH:mm:ss...
-  let match = text.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[T ]|$)/);
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ]|$)/);
   if (match) return `${match[1]}-${match[2]}-${match[3]}`;
 
   // Brazilian date: dd/mm/yyyy (with optional time)
-  match = text.match(/^(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})(?:[ T].*)?$/);
+  match = text.match(/^(\d{1,2})[\\/.-](\d{1,2})[\\/.-](\d{4})(?:[ T].*)?$/);
   if (match) {
     return `${match[3]}-${String(match[2]).padStart(2, '0')}-${String(match[1]).padStart(2, '0')}`;
   }
@@ -187,7 +187,7 @@ function formatDate(value) {
   const iso = normalizeDateValue(value);
   if (!iso) return '—';
 
-  const match = iso.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (match) return `${match[3]}/${match[2]}/${match[1]}`;
 
   return iso;
@@ -249,6 +249,15 @@ function App() {
     try {
       const result = await api('read');
       const normalized = { ...emptyData(), ...result };
+      // Vincula automaticamente o cliente pelo nome para que o formulário de edição
+      // consiga selecionar o cliente correto mesmo que a planilha não tenha clientId.
+      const clientByName = new Map((normalized.clients || []).map(client => [
+        String(client.name || '').trim().toLowerCase(), client.id
+      ]));
+      normalized.events = (normalized.events || []).map(event => ({
+        ...event,
+        clientId: event.clientId || clientByName.get(String(event.clientName || '').trim().toLowerCase()) || ''
+      }));
       // Garante que datas vindas do Sheets tenham sempre o mesmo formato
       // usado pelos inputs HTML: yyyy-MM-dd.
       for (const key of ['events', 'transactions', 'receivable', 'payable']) {
