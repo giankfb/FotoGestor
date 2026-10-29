@@ -298,10 +298,44 @@ function App() {
         next.time = formatTime(next.time) || next.time;
       }
 
-      await api(isUpdate ? 'update' : 'create', {
-        entity: key,
-        item: next
-      });
+      // Valor recebido/pago é derivado dos lançamentos individuais.
+      // Se o usuário editar esse campo diretamente na conta, ajustamos o
+      // último recebimento/pagamento em vez de gravar um valor que depois
+      // seria sobrescrito pela sincronização.
+      if (isUpdate && (key === 'receivable' || key === 'payable') && Object.prototype.hasOwnProperty.call(item, 'paid')) {
+        const list = key === 'receivable' ? (data.receipts || []) : (data.payments || []);
+        const refKey = key === 'receivable' ? 'receivableId' : 'payableId';
+        const related = list.filter(x => String(x[refKey] || '') === String(item.id));
+        const desired = Math.max(0, Number(item.paid || 0));
+        const current = related.reduce((sum, x) => sum + Number(x.amount || 0), 0);
+        if (Math.abs(desired - current) > 0.001) {
+          if (related.length) {
+            const latest = [...related].sort((a,b) => String(b.date||'').localeCompare(String(a.date||'')))[0];
+            const nextAmount = Math.max(0, Number(latest.amount || 0) + desired - current);
+            if (nextAmount <= 0.001) await api('delete', { entity: key === 'receivable' ? 'receipts' : 'payments', id: latest.id });
+            else await api('update', { entity: key === 'receivable' ? 'receipts' : 'payments', item: { ...latest, amount: nextAmount, updatedAt: new Date().toISOString() } });
+          } else if (desired > 0) {
+            const entity = key === 'receivable' ? 'receipts' : 'payments';
+            const ref = key === 'receivable' ? { receivableId: item.id, eventId: item.eventId || '' } : { payableId: item.id };
+            await api('create', { entity, item: { id: crypto.randomUUID(), date: today(), amount: desired, method: item.method || 'Pix', notes: 'Ajuste pelo valor recebido/pago', ...ref, person: item.person || '' } });
+          }
+          const refreshed = { ...next };
+          delete refreshed.paid;
+          delete refreshed.method;
+          delete refreshed.status;
+          await api('update', { entity: key, item: refreshed });
+        } else {
+          delete next.paid;
+          delete next.method;
+          delete next.status;
+          await api('update', { entity: key, item: next });
+        }
+      } else {
+        await api(isUpdate ? 'update' : 'create', {
+          entity: key,
+          item: next
+        });
+      }
 
       setModal(null);
       setNotice('Registro salvo.');
@@ -975,10 +1009,10 @@ function PaymentModal({ account, receipts, type='receivable', close, save, remov
     if(amount>allowed+0.001){setError(`O valor não pode ser maior que o saldo de ${money(allowed)}.`);return;}
     save({ ...form, amount, paymentType:type, ...(type==='payable'?{payableId:account.id, person:account.person||''}:{receivableId:account.id,eventId:account.eventId||'',person:account.person||''}) });
   };
-  const edit = r => setForm({id:r.id,date:r.date||today(),amount:r.amount||'',method:r.method||'Pix',notes:r.notes||'',paymentType:type});
+  const edit = r => { setError(''); setForm({id:r.id,date:normalizeDateValue(r.date||today()),amount:String(r.amount ?? ''),method:r.method||'Pix',notes:r.notes||'',paymentType:type}); };
   return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&close()}>
     <form className="modal" onSubmit={submit}>
-      <div className="modal-head"><div><p className="eyebrow">{label}</p><h2>{account.description || 'Conta'}</h2><small>{account.person || 'Cliente / fornecedor'} · Total {money(account.amount)}</small></div><button type="button" className="icon-btn" onClick={close}><X /></button></div>
+      <div className="modal-head"><div><p className="eyebrow">{form.id ? `EDITAR ${label}` : label}</p><h2>{account.description || 'Conta'}</h2><small>{account.person || 'Cliente / fornecedor'} · Total {money(account.amount)}</small></div><button type="button" className="icon-btn" onClick={close}><X /></button></div>
       <div className="panel"><b>Já {type==='payable'?'pago':'recebido'}: {money(received)}</b><br/><span>Saldo pendente: <strong>{money(balance)}</strong></span></div><div className="panel"><small>Os valores e a forma de pagamento abaixo ficam registrados individualmente. Ao editar, o Caixa também é atualizado.</small></div>
       <div className="form-grid">
         <label className="field">Data<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label>
@@ -988,7 +1022,7 @@ function PaymentModal({ account, receipts, type='receivable', close, save, remov
       </div>
       {receipts.length>0 && <div className="panel"><b>Histórico</b>{receipts.map(r=><div key={r.id} style={{display:'flex',justifyContent:'space-between',gap:12,padding:'8px 0',borderBottom:'1px solid #eee'}}><span>{formatDate(r.date)} · {r.method || '—'}{r.notes ? ` · ${r.notes}` : ''}</span><span><b>{money(r.amount)}</b> <button type="button" className="icon-btn" title="Editar" onClick={()=>edit(r)}><Edit size={13}/></button> <button type="button" className="icon-btn danger" title="Excluir" onClick={()=>remove(r)}><Trash2 size={13}/></button></span></div>)}</div>}
       {error && <p role="alert">{error}</p>}
-      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setForm({date:today(),amount:'',method:'Pix',notes:''})}>{form.id?'Novo pagamento':'Fechar'}</button><button className="primary-btn" type="submit">{form.id?'Salvar alteração':(type==='payable'?'Registrar pagamento':'Registrar recebimento')}</button></div>
+      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>{setError('');setForm({date:today(),amount:'',method:'Pix',notes:'',paymentType:type});}}>{form.id?'Novo pagamento':'Fechar'}</button><button className="primary-btn" type="submit">{form.id?'Salvar alteração':(type==='payable'?'Registrar pagamento':'Registrar recebimento')}</button></div>
     </form>
   </div>;
 }
