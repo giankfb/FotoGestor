@@ -233,12 +233,23 @@ function upsertCash_(sourceType, sourceId, tx){
   return record[0];
 }
 function deleteCashBySource_(sourceType, sourceId){ const sh=ss_().getSheetByName('Lancamentos'); if(!sh||sh.getLastRow()<2)return; const vals=sh.getDataRange().getValues(),h=vals[0].map(String),st=h.indexOf('sourceType'),si=h.indexOf('sourceId'); for(let i=vals.length-1;i>=1;i--) if(String(vals[i][st]||'')===sourceType&&String(vals[i][si]||'')===String(sourceId)) sh.deleteRow(i+1); }
+function lookupAccount_(sheetName, id){
+  const sh=ss_().getSheetByName(sheetName); if(!sh || sh.getLastRow()<2) return null;
+  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), idc=h.indexOf('id');
+  if(idc<0) return null;
+  for(let i=1;i<vals.length;i++) if(String(vals[i][idc]||'')===String(id)){
+    const o={}; h.forEach((k,j)=>o[k]=vals[i][j]); return o;
+  }
+  return null;
+}
 function lookupAccountPerson_(sheetName, id, personFallback){
   if(personFallback) return String(personFallback);
-  const sh=ss_().getSheetByName(sheetName); if(!sh || sh.getLastRow()<2) return '';
-  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), idc=h.indexOf('id'), pc=h.indexOf('person');
-  if(idc<0 || pc<0) return '';
-  for(let i=1;i<vals.length;i++) if(String(vals[i][idc]||'')===String(id)) return String(vals[i][pc]||'');
+  const account=lookupAccount_(sheetName,id);
+  if(account && account.person) return String(account.person);
+  if(account && account.eventId){
+    const event=lookupAccount_('Eventos',account.eventId);
+    if(event && event.clientName) return String(event.clientName);
+  }
   return '';
 }
 function syncReceiptCash_(item){
