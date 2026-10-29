@@ -313,8 +313,10 @@ function App() {
 
   const savePayment = async (payment) => {
     try {
+      const isUpdate = Boolean(payment.id);
       const next = { ...payment, id: payment.id || crypto.randomUUID(), date: normalizeDateValue(payment.date || today()), updatedAt: new Date().toISOString() };
-      await api(next.id === payment.id && payment.id ? 'update' : 'create', { entity: 'receipts', item: next });
+      const entity = payment.paymentType === 'payable' ? 'payments' : 'receipts';
+      await api(isUpdate ? 'update' : 'create', { entity, item: next });
       setPaymentModal(null);
       setNotice('Recebimento registrado.');
       await refresh();
@@ -322,8 +324,8 @@ function App() {
   };
 
   const removePayment = async payment => {
-    if (!confirm('Excluir este recebimento? O saldo da conta será recalculado.')) return;
-    try { await api('delete', { entity: 'receipts', id: payment.id }); await refresh(); setNotice('Recebimento excluído.'); }
+    if (!confirm('Excluir este pagamento? O saldo da conta e o caixa serão recalculados.')) return;
+    try { await api('delete', { entity: payment.paymentType === 'payable' ? 'payments' : 'receipts', id: payment.id }); await refresh(); setNotice('Pagamento excluído.'); }
     catch (e) { setError(e.message); }
   };
 
@@ -650,6 +652,11 @@ function App() {
                                     <Wallet size={15} />
                                   </button>
                                 )}
+                                {active === 'payable' && (
+                                  <button className="icon-btn" title="Registrar pagamento" onClick={() => setPaymentModal({ account: item, type: 'payable' })}>
+                                    <Wallet size={15} />
+                                  </button>
+                                )}
                                 <button className="icon-btn danger" title="Excluir" onClick={() => del(active, item)}>
                                   <Trash2 size={15} />
                                 </button>
@@ -676,7 +683,8 @@ function App() {
       {paymentModal && (
         <PaymentModal
           account={paymentModal.account}
-          receipts={(data.receipts || []).filter(r => r.receivableId === paymentModal.account.id)}
+          receipts={(paymentModal.type === 'payable' ? (data.payments || []) : (data.receipts || [])).filter(r => (paymentModal.type === 'payable' ? r.payableId : r.receivableId) === paymentModal.account.id).map(r => ({...r, paymentType: paymentModal.type || 'receivable'}))}
+          type={paymentModal.type || 'receivable'}
           close={() => setPaymentModal(null)}
           save={savePayment}
           remove={removePayment}
@@ -953,37 +961,37 @@ function RecordModal({
   );
 }
 
-function PaymentModal({ account, receipts, close, save, remove }) {
+function PaymentModal({ account, receipts, type='receivable', close, save, remove }) {
   const [form, setForm] = useState({ date: today(), amount: '', method: 'Pix', notes: '' });
   const [error, setError] = useState('');
   const received = receipts.reduce((s,r)=>s+Number(r.amount||0),0);
   const balance = Math.max(0, Number(account.amount||0)-received);
-
+  const label = type === 'payable' ? 'PAGAMENTO' : 'RECEBIMENTO';
   const submit = e => {
-    e.preventDefault();
-    const amount=Number(form.amount||0);
+    e.preventDefault(); const amount=Number(form.amount||0);
     if(amount<=0){setError('Informe um valor maior que zero.');return;}
-    if(amount>balance+0.001){setError(`O recebimento não pode ser maior que o saldo de ${money(balance)}.`);return;}
-    save({ ...form, amount, receivableId: account.id, eventId: account.eventId || '' });
+    const editing = form.id ? receipts.find(r=>r.id===form.id) : null;
+    const allowed = balance + Number(editing?.amount || 0);
+    if(amount>allowed+0.001){setError(`O valor não pode ser maior que o saldo de ${money(allowed)}.`);return;}
+    save({ ...form, amount, paymentType:type, ...(type==='payable'?{payableId:account.id, person:account.person||''}:{receivableId:account.id,eventId:account.eventId||'',person:account.person||''}) });
   };
-
+  const edit = r => setForm({id:r.id,date:r.date||today(),amount:r.amount||'',method:r.method||'Pix',notes:r.notes||'',paymentType:type});
   return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&close()}>
     <form className="modal" onSubmit={submit}>
-      <div className="modal-head"><div><p className="eyebrow">RECEBIMENTO</p><h2>{account.description || 'Conta a receber'}</h2><small>{account.person || 'Cliente'} · Total {money(account.amount)}</small></div><button type="button" className="icon-btn" onClick={close}><X /></button></div>
-      <div className="panel"><b>Já recebido: {money(received)}</b><br/><span>Saldo pendente: <strong>{money(balance)}</strong></span></div>
+      <div className="modal-head"><div><p className="eyebrow">{label}</p><h2>{account.description || 'Conta'}</h2><small>{account.person || 'Cliente / fornecedor'} · Total {money(account.amount)}</small></div><button type="button" className="icon-btn" onClick={close}><X /></button></div>
+      <div className="panel"><b>Já {type==='payable'?'pago':'recebido'}: {money(received)}</b><br/><span>Saldo pendente: <strong>{money(balance)}</strong></span></div>
       <div className="form-grid">
         <label className="field">Data<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label>
-        <label className="field">Valor recebido<input type="number" min="0.01" max={balance} step="0.01" required value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
+        <label className="field">Valor {type==='payable'?'pago':'recebido'}<input type="number" min="0.01" step="0.01" required value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
         <label className="field">Forma de pagamento<select value={form.method} onChange={e=>setForm({...form,method:e.target.value})}>{['Pix','Dinheiro','Cartão de crédito','Cartão de débito','Transferência','Outro'].map(x=><option key={x}>{x}</option>)}</select></label>
         <label className="field wide">Observação<textarea rows="3" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
       </div>
-      {receipts.length>0 && <div className="panel"><b>Histórico de pagamentos</b>{receipts.map(r=><div key={r.id} style={{display:'flex',justifyContent:'space-between',gap:12,padding:'8px 0',borderBottom:'1px solid #eee'}}><span>{formatDate(r.date)} · {r.method || '—'}{r.notes ? ` · ${r.notes}` : ''}</span><span><b>{money(r.amount)}</b> <button type="button" className="icon-btn danger" title="Excluir recebimento" onClick={()=>remove(r)}><Trash2 size={13}/></button></span></div>)}</div>}
+      {receipts.length>0 && <div className="panel"><b>Histórico</b>{receipts.map(r=><div key={r.id} style={{display:'flex',justifyContent:'space-between',gap:12,padding:'8px 0',borderBottom:'1px solid #eee'}}><span>{formatDate(r.date)} · {r.method || '—'}{r.notes ? ` · ${r.notes}` : ''}</span><span><b>{money(r.amount)}</b> <button type="button" className="icon-btn" title="Editar" onClick={()=>edit(r)}><Edit size={13}/></button> <button type="button" className="icon-btn danger" title="Excluir" onClick={()=>remove(r)}><Trash2 size={13}/></button></span></div>)}</div>}
       {error && <p role="alert">{error}</p>}
-      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={close}>Fechar</button><button className="primary-btn" type="submit" disabled={balance<=0}>Registrar pagamento</button></div>
+      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setForm({date:today(),amount:'',method:'Pix',notes:''})}>{form.id?'Novo pagamento':'Fechar'}</button><button className="primary-btn" type="submit">{form.id?'Salvar alteração':(type==='payable'?'Registrar pagamento':'Registrar recebimento')}</button></div>
     </form>
   </div>;
 }
-
 function Reports({ data, period, setPeriod }) {
   const tx = (data.transactions || []).filter(x => (x.date || '').startsWith(period));
 

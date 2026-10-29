@@ -4,10 +4,11 @@ const SHEETS = {
   Fornecedores: ['id','name','category','phone','email','document','notes','createdAt','updatedAt'],
   Servicos: ['id','name','category','price','description','createdAt','updatedAt'],
   Eventos: ['id','title','clientName','date','time','type','location','value','status','notes','createdAt','updatedAt'],
-  Lancamentos: ['id','type','date','description','category','person','method','amount','status','createdAt','updatedAt'],
+  Lancamentos: ['id','type','date','description','category','person','method','amount','status','sourceType','sourceId','createdAt','updatedAt'],
   ContasReceber: ['id','eventId','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
-  Recebimentos: ['id','receivableId','eventId','date','amount','method','notes','createdAt','updatedAt'],
+  Recebimentos: ['id','receivableId','eventId','date','amount','method','notes','cashTransactionId','createdAt','updatedAt'],
   ContasPagar: ['id','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
+  Pagamentos: ['id','payableId','date','amount','method','notes','cashTransactionId','createdAt','updatedAt'],
   Configuracoes: ['key','value']
 };
 function doGet() { return json_({ok:true,message:'FotoGestor API ativa. Use POST para operações.'}); }
@@ -38,7 +39,7 @@ function setupFotoGestor() {
   const first=ss.getSheetByName('Sheet1');if(first)ss.deleteSheet(first);
   Logger.log('Planilha criada: '+ss.getUrl()); return ss.getUrl();
 }
-function entitySheet_(entity) { const map={clients:'Clientes',suppliers:'Fornecedores',services:'Servicos',events:'Eventos',transactions:'Lancamentos',receivable:'ContasReceber',payable:'ContasPagar',receipts:'Recebimentos'}; const name=map[entity]; if(!name)throw new Error('Cadastro inválido.'); return name; }
+function entitySheet_(entity) { const map={clients:'Clientes',suppliers:'Fornecedores',services:'Servicos',events:'Eventos',transactions:'Lancamentos',receivable:'ContasReceber',payable:'ContasPagar',receipts:'Recebimentos',payments:'Pagamentos'}; const name=map[entity]; if(!name)throw new Error('Cadastro inválido.'); return name; }
 function ensureStructure_() {
   const ss=ss_();
   Object.keys(SHEETS).forEach(name=>{
@@ -94,7 +95,7 @@ function todayISO_(){ return Utilities.formatDate(new Date(), Session.getScriptT
 function readAll_() {
   ensureStructure_();
   const ss=ss_(),out={clients:[],suppliers:[],services:[],events:[],transactions:[],receivable:[],payable:[],receipts:[],settings:{}};
-  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable',Recebimentos:'receipts'};
+  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable',Recebimentos:'receipts',Pagamentos:'payments'};
   Object.keys(map).forEach(name=>{
     const sh=ss.getSheetByName(name); if(!sh) return;
     const range=sh.getDataRange();
@@ -188,7 +189,11 @@ function saveRow_(sheetName,item,isUpdate) {
   });
   if(sheetName==='Eventos') syncReceivableForEvent_(item);
   if(sheetName==='Recebimentos') syncReceivableFromReceipts_(item.receivableId);
+  if(sheetName==='Recebimentos') syncReceiptCash_(item, isUpdate);
+  if(sheetName==='Pagamentos') syncPayableFromPayments_(item.payableId);
+  if(sheetName==='Pagamentos') syncPaymentCash_(item, isUpdate);
   if(sheetName==='ContasReceber' && item.eventId) syncReceivableFromReceipts_(item.id);
+  if(sheetName==='ContasPagar') syncPayableFromPayments_(item.id);
 }
 
 function syncReceivableFromReceipts_(receivableId) {
@@ -203,5 +208,19 @@ function syncReceivableFromReceipts_(receivableId) {
     return;
   }
 }
-function deleteRow_(sheetName,id) { if(!id)throw new Error('Identificador ausente.');const sh=ss_().getSheetByName(sheetName);if(!sh)throw new Error('Aba não encontrada.');const vals=sh.getDataRange().getValues(), headers=vals[0].map(String);for(let i=1;i<vals.length;i++)if(String(vals[i][0])===String(id)){const deleted=headers.reduce((o,h,j)=>(o[h]=vals[i][j],o),{});sh.deleteRow(i+1);if(sheetName==='Recebimentos')syncReceivableFromReceipts_(deleted.receivableId);return;}throw new Error('Registro não encontrado.'); }
+function findRowById_(sheetName,id){ const sh=ss_().getSheetByName(sheetName); if(!sh||sh.getLastRow()<2)return -1; const vals=sh.getDataRange().getValues(); for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)) return i+1; return -1; }
+function deleteRow_(sheetName,id) { if(!id)throw new Error('Identificador ausente.');const sh=ss_().getSheetByName(sheetName);if(!sh)throw new Error('Aba não encontrada.');const vals=sh.getDataRange().getValues(), headers=vals[0].map(String);for(let i=1;i<vals.length;i++)if(String(vals[i][0])===String(id)){const deleted=headers.reduce((o,h,j)=>(o[h]=vals[i][j],o),{});sh.deleteRow(i+1);if(sheetName==='Recebimentos'){syncReceivableFromReceipts_(deleted.receivableId); deleteCashBySource_('receivable', id);} if(sheetName==='Pagamentos'){syncPayableFromPayments_(deleted.payableId); deleteCashBySource_('payable', id);} return;}throw new Error('Registro não encontrado.'); }
+function upsertCash_(sourceType, sourceId, tx){
+  ensureStructure_(); const sh=ss_().getSheetByName('Lancamentos'); const headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String); const vals=sh.getDataRange().getValues(); const si=headers.indexOf('sourceId'), st=headers.indexOf('sourceType'); let row=-1;
+  for(let i=1;i<vals.length;i++) if(String(vals[i][st]||'')===sourceType && String(vals[i][si]||'')===String(sourceId)){row=i+1;break;}
+  const record=headers.map(h=>{ if(h==='id') return row>0?vals[row-1][0]:Utilities.getUuid(); if(h==='type') return tx.type; if(h==='date') return normalizeDate_(tx.date); if(h==='description') return tx.description||''; if(h==='category') return tx.category||''; if(h==='person') return tx.person||''; if(h==='method') return tx.method||''; if(h==='amount') return Number(tx.amount||0); if(h==='status') return 'Confirmado'; if(h==='sourceType') return sourceType; if(h==='sourceId') return sourceId; if(h==='createdAt') return row>0?vals[row-1][headers.indexOf('createdAt')]:new Date(); if(h==='updatedAt') return new Date(); return row>0?vals[row-1][headers.indexOf(h)]||'':''; });
+  if(row>0) sh.getRange(row,1,1,record.length).setValues([record]); else sh.appendRow(record);
+  const r=row>0?row:sh.getLastRow(); const dc=headers.indexOf('date'); if(dc>=0)sh.getRange(r,dc+1).setNumberFormat('@');
+  return record[0];
+}
+function deleteCashBySource_(sourceType, sourceId){ const sh=ss_().getSheetByName('Lancamentos'); if(!sh||sh.getLastRow()<2)return; const vals=sh.getDataRange().getValues(),h=vals[0].map(String),st=h.indexOf('sourceType'),si=h.indexOf('sourceId'); for(let i=vals.length-1;i>=1;i--) if(String(vals[i][st]||'')===sourceType&&String(vals[i][si]||'')===String(sourceId)) sh.deleteRow(i+1); }
+function syncReceiptCash_(item){ const total=Number(item.amount||0); if(total<=0)return; const cashId=upsertCash_('receivable',item.id,{type:'Entrada',date:item.date,description:'Recebimento · '+(item.notes||'Conta a receber'),person:item.person||'',method:item.method||'',amount:total,category:'Contas a receber'}); const sh=ss_().getSheetByName('Recebimentos'); const row=findRowById_('Recebimentos',item.id); if(row>0){const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String),c=h.indexOf('cashTransactionId'); if(c>=0)sh.getRange(row,c+1).setValue(cashId);} }
+function syncPaymentCash_(item){ const total=Number(item.amount||0); if(total<=0)return; const cashId=upsertCash_('payable',item.id,{type:'Saída',date:item.date,description:'Pagamento · '+(item.notes||'Conta a pagar'),person:item.person||'',method:item.method||'',amount:total,category:'Contas a pagar'}); const sh=ss_().getSheetByName('Pagamentos'); const row=findRowById_('Pagamentos',item.id); if(row>0){const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String),c=h.indexOf('cashTransactionId'); if(c>=0)sh.getRange(row,c+1).setValue(cashId);} }
+function paymentsTotalFor_(payableId){ const sh=ss_().getSheetByName('Pagamentos'); if(!sh||sh.getLastRow()<2)return 0; const vals=sh.getDataRange().getValues(),h=vals[0].map(String),pi=h.indexOf('payableId'),ai=h.indexOf('amount'); return vals.slice(1).reduce((s,r)=>s+(String(r[pi]||'')===String(payableId)?Number(r[ai]||0):0),0); }
+function syncPayableFromPayments_(payableId){ if(!payableId)return; const sh=ss_().getSheetByName('ContasPagar'); if(!sh||sh.getLastRow()<2)return; const vals=sh.getDataRange().getValues(),h=vals[0].map(String),idc=h.indexOf('id'),ac=h.indexOf('amount'),pc=h.indexOf('paid'),sc=h.indexOf('status'),dc=h.indexOf('dueDate'),uc=h.indexOf('updatedAt'); for(let i=1;i<vals.length;i++) if(String(vals[i][idc]||'')===String(payableId)){const total=Number(vals[i][ac]||0),paid=paymentsTotalFor_(payableId),due=dc>=0?normalizeDate_(vals[i][dc]):''; sh.getRange(i+1,pc+1).setValue(paid);sh.getRange(i+1,sc+1).setValue(paid>=total?'Pago':paid>0?'Parcial':(due&&due<todayISO_()?'Vencida':'Pendente'));if(uc>=0)sh.getRange(i+1,uc+1).setValue(new Date());return;} }
 function saveSettings_(obj) { const sh=ss_().getSheetByName('Configuracoes');const vals=sh.getDataRange().getValues();Object.keys(obj).forEach(k=>{let found=-1;for(let i=1;i<vals.length;i++)if(String(vals[i][0])===k){found=i+1;break;}if(found<0)sh.appendRow([k,obj[k]]);else sh.getRange(found,2).setValue(obj[k]);}); }
