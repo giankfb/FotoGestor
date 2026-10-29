@@ -119,11 +119,16 @@ const money = n => Number(n || 0).toLocaleString('pt-BR', {
   currency: 'BRL'
 });
 
-const today = () => {
-  const d = new Date();
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10);
+// Datas de negócio devem ser tratadas no fuso local, sem passar por UTC.
+// Isso evita que eventos de madrugada/no fim do dia mudem de data no Brasil.
+const localISODate = (date = new Date()) => {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+
+const today = () => localISODate();
+
+const currentMonth = () => today().slice(0, 7);
 
 const emptyData = () => ({
   clients: [],
@@ -152,20 +157,40 @@ async function api(action, data) {
   return result.data;
 }
 
-function formatDate(value) {
-  if (!value) return '—';
+function normalizeDateValue(value) {
+  if (value === null || value === undefined || value === '') return '';
 
-  const text = String(value);
-  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-
-  if (match) {
-    return `${match[3]}/${match[2]}/${match[1]}`;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return localISODate(value);
   }
 
-  const date = new Date(`${text}T12:00:00`);
-  return Number.isNaN(date.getTime())
-    ? text
-    : date.toLocaleDateString('pt-BR');
+  const text = String(value).trim();
+
+  // ISO / Google Sheets: yyyy-mm-dd or yyyy-mm-ddTHH:mm:ss...
+  let match = text.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[T ]|$)/);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+
+  // Brazilian date: dd/mm/yyyy (with optional time)
+  match = text.match(/^(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})(?:[ T].*)?$/);
+  if (match) {
+    return `${match[3]}-${String(match[2]).padStart(2, '0')}-${String(match[1]).padStart(2, '0')}`;
+  }
+
+  // Google Sheets/Apps Script Date text such as "Sat Oct 31 2026 ..."
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) return localISODate(parsed);
+
+  return text;
+}
+
+function formatDate(value) {
+  const iso = normalizeDateValue(value);
+  if (!iso) return '—';
+
+  const match = iso.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
+
+  return iso;
 }
 
 /*
@@ -215,7 +240,7 @@ function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [mobile, setMobile] = useState(false);
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const [period, setPeriod] = useState(currentMonth());
 
   const refresh = async () => {
     setLoading(true);
@@ -223,7 +248,17 @@ function App() {
 
     try {
       const result = await api('read');
-      setData({ ...emptyData(), ...result });
+      const normalized = { ...emptyData(), ...result };
+      // Garante que datas vindas do Sheets tenham sempre o mesmo formato
+      // usado pelos inputs HTML: yyyy-MM-dd.
+      for (const key of ['events', 'transactions', 'receivable', 'payable']) {
+        normalized[key] = (normalized[key] || []).map(item => ({
+          ...item,
+          ...(item.date !== undefined ? { date: normalizeDateValue(item.date) } : {}),
+          ...(item.dueDate !== undefined ? { dueDate: normalizeDateValue(item.dueDate) } : {})
+        }));
+      }
+      setData(normalized);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -243,6 +278,10 @@ function App() {
         id: item.id || crypto.randomUUID(),
         updatedAt: new Date().toISOString()
       };
+
+      // Nunca envie uma data de negócio convertida por UTC.
+      if (next.date !== undefined) next.date = normalizeDateValue(next.date);
+      if (next.dueDate !== undefined) next.dueDate = normalizeDateValue(next.dueDate);
 
       if (key === 'events' && next.time) {
         next.time = formatTime(next.time) || next.time;
@@ -440,7 +479,7 @@ function App() {
                           <b>{event.date?.slice(8, 10) || '—'}</b>
                           <small>
                             {event.date
-                              ? new Date(`${event.date}T12:00:00`).toLocaleDateString('pt-BR', { month: 'short' })
+                              ? `${['jan.','fev.','mar.','abr.','mai.','jun.','jul.','ago.','set.','out.','nov.','dez.'][Number(event.date.slice(5, 7)) - 1]}`
                               : 'Data'}
                           </small>
                         </div>

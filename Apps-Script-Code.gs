@@ -33,7 +33,7 @@ function ss_() { const id=PropertiesService.getScriptProperties().getProperty('S
 function setupFotoGestor() {
   const ss=SpreadsheetApp.create('FotoGestor - Banco de dados');
   PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID',ss.getId());
-  Object.keys(SHEETS).forEach(name=>{let sh=ss.getSheetByName(name);if(!sh)sh=ss.insertSheet(name);sh.clear();sh.getRange(1,1,1,SHEETS[name].length).setValues([SHEETS[name]]);sh.setFrozenRows(1);sh.getRange(1,1,1,SHEETS[name].length).setFontWeight('bold').setBackground('#101827').setFontColor('#ffffff');});
+  Object.keys(SHEETS).forEach(name=>{let sh=ss.getSheetByName(name);if(!sh)sh=ss.insertSheet(name);sh.clear();sh.getRange(1,1,1,SHEETS[name].length).setValues([SHEETS[name]]);sh.setFrozenRows(1);sh.getRange(1,1,1,SHEETS[name].length).setFontWeight('bold').setBackground('#101827').setFontColor('#ffffff');['date','dueDate'].forEach(h=>{const c=SHEETS[name].indexOf(h);if(c>=0)sh.getRange(2,c+1,Math.max(1,sh.getMaxRows()-1),1).setNumberFormat('@');});});
   const first=ss.getSheetByName('Sheet1');if(first)ss.deleteSheet(first);
   Logger.log('Planilha criada: '+ss.getUrl()); return ss.getUrl();
 }
@@ -45,7 +45,28 @@ function readAll_() {
   const set=ss.getSheetByName('Configuracoes');if(set&&set.getLastRow()>1)set.getRange(2,1,set.getLastRow()-1,2).getValues().forEach(r=>out.settings[String(r[0])]=r[1]);
   out.settings.studioName=out.settings.studioName||'Meu Estúdio de Fotografia'; return out;
 }
-function serialize_(v) { return v instanceof Date ? Utilities.formatDate(v,Session.getScriptTimeZone(),'yyyy-MM-dd') : v; }
+function normalizeDate_(value) {
+  if (value === null || value === undefined || value === '') return '';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+
+  const text = String(value).trim();
+  let m = text.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[T ].*)?$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+
+  m = text.match(/^(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})(?:[ T].*)?$/);
+  if (m) return `${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
+
+  return text;
+}
+
+function serialize_(v) {
+  return v instanceof Date
+    ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd')
+    : v;
+}
+
 function saveRow_(sheetName,item,isUpdate) {
   if(!item || !item.id)throw new Error('Registro sem identificador.');
   const ss=ss_(),sh=ss.getSheetByName(sheetName);if(!sh)throw new Error('Aba não encontrada: '+sheetName);
@@ -53,8 +74,24 @@ function saveRow_(sheetName,item,isUpdate) {
   for(let i=1;i<rows.length;i++)if(String(rows[i][0])===String(item.id)){rowIndex=i+1;break;}
   if(isUpdate&&rowIndex<0)throw new Error('Registro não encontrado para atualização.');
   if(!isUpdate&&rowIndex>0)throw new Error('Este registro já existe.');
-  const now=new Date();const record=headers.map(h=>h==='createdAt'?(item.createdAt||now):h==='updatedAt'?now:(item[h]===undefined?'':item[h]));
-  if(rowIndex<0)sh.appendRow(record);else sh.getRange(rowIndex,1,1,record.length).setValues([record]);
+
+  const now=new Date();
+  const dateFields={date:true,dueDate:true};
+  const record=headers.map(h=>{
+    if(h==='createdAt') return item.createdAt||now;
+    if(h==='updatedAt') return now;
+    if(dateFields[h]) return normalizeDate_(item[h]);
+    return item[h]===undefined?'':item[h];
+  });
+
+  if(rowIndex<0) sh.appendRow(record);
+  else sh.getRange(rowIndex,1,1,record.length).setValues([record]);
+
+  // Datas são armazenadas como texto ISO para impedir que o Sheets aplique
+  // conversões de fuso/locale e faça a data aparecer um dia antes/depois.
+  headers.forEach((h,i)=>{
+    if(dateFields[h]) sh.getRange(rowIndex<0 ? sh.getLastRow() : rowIndex, i+1).setNumberFormat('@');
+  });
 }
 function deleteRow_(sheetName,id) { if(!id)throw new Error('Identificador ausente.');const sh=ss_().getSheetByName(sheetName);if(!sh)throw new Error('Aba não encontrada.');const vals=sh.getDataRange().getValues();for(let i=1;i<vals.length;i++)if(String(vals[i][0])===String(id)){sh.deleteRow(i+1);return;}throw new Error('Registro não encontrado.'); }
 function saveSettings_(obj) { const sh=ss_().getSheetByName('Configuracoes');const vals=sh.getDataRange().getValues();Object.keys(obj).forEach(k=>{let found=-1;for(let i=1;i<vals.length;i++)if(String(vals[i][0])===k){found=i+1;break;}if(found<0)sh.appendRow([k,obj[k]]);else sh.getRange(found,2).setValue(obj[k]);}); }
