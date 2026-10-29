@@ -5,7 +5,8 @@ const SHEETS = {
   Servicos: ['id','name','category','price','description','createdAt','updatedAt'],
   Eventos: ['id','title','clientName','date','time','type','location','value','status','notes','createdAt','updatedAt'],
   Lancamentos: ['id','type','date','description','category','person','method','amount','status','createdAt','updatedAt'],
-  ContasReceber: ['id','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
+  ContasReceber: ['id','eventId','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
+  Recebimentos: ['id','receivableId','eventId','date','amount','method','notes','createdAt','updatedAt'],
   ContasPagar: ['id','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
   Configuracoes: ['key','value']
 };
@@ -37,10 +38,63 @@ function setupFotoGestor() {
   const first=ss.getSheetByName('Sheet1');if(first)ss.deleteSheet(first);
   Logger.log('Planilha criada: '+ss.getUrl()); return ss.getUrl();
 }
-function entitySheet_(entity) { const map={clients:'Clientes',suppliers:'Fornecedores',services:'Servicos',events:'Eventos',transactions:'Lancamentos',receivable:'ContasReceber',payable:'ContasPagar'}; const name=map[entity]; if(!name)throw new Error('Cadastro inválido.'); return name; }
+function entitySheet_(entity) { const map={clients:'Clientes',suppliers:'Fornecedores',services:'Servicos',events:'Eventos',transactions:'Lancamentos',receivable:'ContasReceber',payable:'ContasPagar',receipts:'Recebimentos'}; const name=map[entity]; if(!name)throw new Error('Cadastro inválido.'); return name; }
+function ensureStructure_() {
+  const ss=ss_();
+  Object.keys(SHEETS).forEach(name=>{
+    let sh=ss.getSheetByName(name);
+    if(!sh){ sh=ss.insertSheet(name); sh.getRange(1,1,1,SHEETS[name].length).setValues([SHEETS[name]]); sh.setFrozenRows(1); return; }
+    const current=sh.getLastColumn()?sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String):[];
+    SHEETS[name].forEach(h=>{ if(!current.includes(h)){ sh.getRange(1,sh.getLastColumn()+1).setValue(h); } });
+  });
+}
+
+function syncReceivableForEvent_(event) {
+  if(!event || !event.id) return;
+  ensureStructure_();
+  const sh=ss_().getSheetByName('ContasReceber');
+  const headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
+  const idx={}; headers.forEach((h,i)=>idx[h]=i);
+  const rows=sh.getDataRange().getValues();
+  let row=-1;
+  for(let i=1;i<rows.length;i++){ if(String(rows[i][idx.eventId]||'')===String(event.id)){ row=i+1; break; } }
+  const value=Number(event.value||0);
+  if(value<=0){ return; }
+  const existingPaid=row>0?Number(rows[row-1][idx.paid]||0):0;
+  const receiptsTotal=receiptsTotalFor_(row>0?String(rows[row-1][idx.id]||''):null);
+  const paid=Math.max(existingPaid,receiptsTotal);
+  const due=normalizeDate_(event.date); const status=paid>=value?'Pago':paid>0?'Parcial':(due && due<todayISO_()?'Vencida':'Pendente');
+  const record=headers.map(h=>{
+    if(h==='id') return row>0?rows[row-1][idx.id]:Utilities.getUuid();
+    if(h==='eventId') return event.id;
+    if(h==='person') return event.clientName||'';
+    if(h==='description') return event.title||'Evento';
+    if(h==='dueDate') return normalizeDate_(event.date);
+    if(h==='amount') return value;
+    if(h==='paid') return paid;
+    if(h==='status') return status;
+    if(h==='method') return row>0?rows[row-1][idx.method]:'';
+    if(h==='createdAt') return row>0?rows[row-1][idx.createdAt]:new Date();
+    if(h==='updatedAt') return new Date();
+    return row>0?rows[row-1][idx[h]]:'';
+  });
+  if(row>0) sh.getRange(row,1,1,record.length).setValues([record]); else sh.appendRow(record);
+}
+
+function receiptsTotalFor_(receivableId) {
+  if(!receivableId) return 0;
+  const sh=ss_().getSheetByName('Recebimentos'); if(!sh || sh.getLastRow()<2) return 0;
+  const vals=sh.getDataRange().getValues(), headers=vals[0].map(String), ri=headers.indexOf('receivableId'), ai=headers.indexOf('amount');
+  if(ri<0||ai<0) return 0;
+  return vals.slice(1).reduce((s,r)=>s+(String(r[ri]||'')===String(receivableId)?Number(r[ai]||0):0),0);
+}
+
+function todayISO_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
+
 function readAll_() {
-  const ss=ss_(),out={clients:[],suppliers:[],services:[],events:[],transactions:[],receivable:[],payable:[],settings:{}};
-  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable'};
+  ensureStructure_();
+  const ss=ss_(),out={clients:[],suppliers:[],services:[],events:[],transactions:[],receivable:[],payable:[],receipts:[],settings:{}};
+  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable',Recebimentos:'receipts'};
   Object.keys(map).forEach(name=>{
     const sh=ss.getSheetByName(name); if(!sh) return;
     const range=sh.getDataRange();
@@ -132,6 +186,22 @@ function saveRow_(sheetName,item,isUpdate) {
   headers.forEach((h,i)=>{
     if(dateFields[h] || h==='time') sh.getRange(rowIndex<0 ? sh.getLastRow() : rowIndex, i+1).setNumberFormat('@');
   });
+  if(sheetName==='Eventos') syncReceivableForEvent_(item);
+  if(sheetName==='Recebimentos') syncReceivableFromReceipts_(item.receivableId);
+  if(sheetName==='ContasReceber' && item.eventId) syncReceivableFromReceipts_(item.id);
 }
-function deleteRow_(sheetName,id) { if(!id)throw new Error('Identificador ausente.');const sh=ss_().getSheetByName(sheetName);if(!sh)throw new Error('Aba não encontrada.');const vals=sh.getDataRange().getValues();for(let i=1;i<vals.length;i++)if(String(vals[i][0])===String(id)){sh.deleteRow(i+1);return;}throw new Error('Registro não encontrado.'); }
+
+function syncReceivableFromReceipts_(receivableId) {
+  if(!receivableId) return;
+  const sh=ss_().getSheetByName('ContasReceber'); if(!sh||sh.getLastRow()<2) return;
+  const vals=sh.getDataRange().getValues(), headers=vals[0].map(String), idc=headers.indexOf('id'), amountc=headers.indexOf('amount'), paidc=headers.indexOf('paid'), statusc=headers.indexOf('status'), upd=headers.indexOf('updatedAt');
+  for(let i=1;i<vals.length;i++) if(String(vals[i][idc]||'')===String(receivableId)){
+    const total=Number(vals[i][amountc]||0), paid=receiptsTotalFor_(receivableId);
+    sh.getRange(i+1,paidc+1).setValue(paid);
+    const duec=headers.indexOf('dueDate'); const due=duec>=0?normalizeDate_(vals[i][duec]):''; sh.getRange(i+1,statusc+1).setValue(paid>=total?'Pago':paid>0?'Parcial':(due && due<todayISO_()?'Vencida':'Pendente'));
+    if(upd>=0) sh.getRange(i+1,upd+1).setValue(new Date());
+    return;
+  }
+}
+function deleteRow_(sheetName,id) { if(!id)throw new Error('Identificador ausente.');const sh=ss_().getSheetByName(sheetName);if(!sh)throw new Error('Aba não encontrada.');const vals=sh.getDataRange().getValues(), headers=vals[0].map(String);for(let i=1;i<vals.length;i++)if(String(vals[i][0])===String(id)){const deleted=headers.reduce((o,h,j)=>(o[h]=vals[i][j],o),{});sh.deleteRow(i+1);if(sheetName==='Recebimentos')syncReceivableFromReceipts_(deleted.receivableId);return;}throw new Error('Registro não encontrado.'); }
 function saveSettings_(obj) { const sh=ss_().getSheetByName('Configuracoes');const vals=sh.getDataRange().getValues();Object.keys(obj).forEach(k=>{let found=-1;for(let i=1;i<vals.length;i++)if(String(vals[i][0])===k){found=i+1;break;}if(found<0)sh.appendRow([k,obj[k]]);else sh.getRange(found,2).setValue(obj[k]);}); }

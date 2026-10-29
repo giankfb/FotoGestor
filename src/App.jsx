@@ -138,6 +138,7 @@ const emptyData = () => ({
   transactions: [],
   receivable: [],
   payable: [],
+  receipts: [],
   settings: { studioName: 'Meu Estúdio de Fotografia' }
 });
 
@@ -241,6 +242,7 @@ function App() {
   const [notice, setNotice] = useState('');
   const [mobile, setMobile] = useState(false);
   const [period, setPeriod] = useState(currentMonth());
+  const [paymentModal, setPaymentModal] = useState(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -260,7 +262,7 @@ function App() {
       }));
       // Garante que datas vindas do Sheets tenham sempre o mesmo formato
       // usado pelos inputs HTML: yyyy-MM-dd.
-      for (const key of ['events', 'transactions', 'receivable', 'payable']) {
+      for (const key of ['events', 'transactions', 'receivable', 'payable', 'receipts']) {
         normalized[key] = (normalized[key] || []).map(item => ({
           ...item,
           ...(item.date !== undefined ? { date: normalizeDateValue(item.date) } : {}),
@@ -307,6 +309,22 @@ function App() {
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const savePayment = async (payment) => {
+    try {
+      const next = { ...payment, id: payment.id || crypto.randomUUID(), date: normalizeDateValue(payment.date || today()), updatedAt: new Date().toISOString() };
+      await api(next.id === payment.id && payment.id ? 'update' : 'create', { entity: 'receipts', item: next });
+      setPaymentModal(null);
+      setNotice('Recebimento registrado.');
+      await refresh();
+    } catch (e) { setError(e.message); }
+  };
+
+  const removePayment = async payment => {
+    if (!confirm('Excluir este recebimento? O saldo da conta será recalculado.')) return;
+    try { await api('delete', { entity: 'receipts', id: payment.id }); await refresh(); setNotice('Recebimento excluído.'); }
+    catch (e) { setError(e.message); }
   };
 
   const createClient = async client => {
@@ -627,6 +645,11 @@ function App() {
                                 <button className="icon-btn" title="Editar" onClick={() => setModal({ entity: active, item })}>
                                   <Edit size={15} />
                                 </button>
+                                {active === 'receivable' && (
+                                  <button className="icon-btn" title="Registrar recebimento" onClick={() => setPaymentModal({ account: item })}>
+                                    <Wallet size={15} />
+                                  </button>
+                                )}
                                 <button className="icon-btn danger" title="Excluir" onClick={() => del(active, item)}>
                                   <Trash2 size={15} />
                                 </button>
@@ -640,7 +663,7 @@ function App() {
                       <Empty text={loading ? 'Carregando dados...' : 'Nenhum registro encontrado.'} />
                     )}
                   </div>
-                  <p className="table-foot">{currentItems.length} registro(s) · Sincronização com Google Sheets</p>
+                  <p className="table-foot">{currentItems.length} registro(s) · Sincronização com Google Sheets{active === 'receivable' ? ' · Use o ícone 💰 para registrar cada pagamento' : ''}</p>
                 </>
               )}
             </>
@@ -649,6 +672,16 @@ function App() {
           <footer>FotoGestor <span>·</span> Gestão simples para quem vive de fotografia</footer>
         </div>
       </main>
+
+      {paymentModal && (
+        <PaymentModal
+          account={paymentModal.account}
+          receipts={(data.receipts || []).filter(r => r.receivableId === paymentModal.account.id)}
+          close={() => setPaymentModal(null)}
+          save={savePayment}
+          remove={removePayment}
+        />
+      )}
 
       {modal && (
         <RecordModal
@@ -712,7 +745,7 @@ function RecordModal({
       : key === 'method'
         ? ['Pix', 'Dinheiro', 'Cartão de crédito', 'Cartão de débito', 'Transferência', 'Outro']
         : key === 'status'
-          ? ['Pendente', 'Confirmado', 'Pago', 'Parcial', 'Cancelado']
+          ? ['Pendente', 'Vencida', 'Confirmado', 'Pago', 'Parcial', 'Cancelado']
           : []
   };
 
@@ -918,6 +951,37 @@ function RecordModal({
       </form>
     </div>
   );
+}
+
+function PaymentModal({ account, receipts, close, save, remove }) {
+  const [form, setForm] = useState({ date: today(), amount: '', method: 'Pix', notes: '' });
+  const [error, setError] = useState('');
+  const received = receipts.reduce((s,r)=>s+Number(r.amount||0),0);
+  const balance = Math.max(0, Number(account.amount||0)-received);
+
+  const submit = e => {
+    e.preventDefault();
+    const amount=Number(form.amount||0);
+    if(amount<=0){setError('Informe um valor maior que zero.');return;}
+    if(amount>balance+0.001){setError(`O recebimento não pode ser maior que o saldo de ${money(balance)}.`);return;}
+    save({ ...form, amount, receivableId: account.id, eventId: account.eventId || '' });
+  };
+
+  return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&close()}>
+    <form className="modal" onSubmit={submit}>
+      <div className="modal-head"><div><p className="eyebrow">RECEBIMENTO</p><h2>{account.description || 'Conta a receber'}</h2><small>{account.person || 'Cliente'} · Total {money(account.amount)}</small></div><button type="button" className="icon-btn" onClick={close}><X /></button></div>
+      <div className="panel"><b>Já recebido: {money(received)}</b><br/><span>Saldo pendente: <strong>{money(balance)}</strong></span></div>
+      <div className="form-grid">
+        <label className="field">Data<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label>
+        <label className="field">Valor recebido<input type="number" min="0.01" max={balance} step="0.01" required value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label>
+        <label className="field">Forma de pagamento<select value={form.method} onChange={e=>setForm({...form,method:e.target.value})}>{['Pix','Dinheiro','Cartão de crédito','Cartão de débito','Transferência','Outro'].map(x=><option key={x}>{x}</option>)}</select></label>
+        <label className="field wide">Observação<textarea rows="3" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
+      </div>
+      {receipts.length>0 && <div className="panel"><b>Histórico de pagamentos</b>{receipts.map(r=><div key={r.id} style={{display:'flex',justifyContent:'space-between',gap:12,padding:'8px 0',borderBottom:'1px solid #eee'}}><span>{formatDate(r.date)} · {r.method || '—'}{r.notes ? ` · ${r.notes}` : ''}</span><span><b>{money(r.amount)}</b> <button type="button" className="icon-btn danger" title="Excluir recebimento" onClick={()=>remove(r)}><Trash2 size={13}/></button></span></div>)}</div>}
+      {error && <p role="alert">{error}</p>}
+      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={close}>Fechar</button><button className="primary-btn" type="submit" disabled={balance<=0}>Registrar pagamento</button></div>
+    </form>
+  </div>;
 }
 
 function Reports({ data, period, setPeriod }) {
