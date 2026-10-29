@@ -3,7 +3,7 @@ const SHEETS = {
   Clientes: ['id','name','phone','email','document','address','notes','createdAt','updatedAt'],
   Fornecedores: ['id','name','category','phone','email','document','notes','createdAt','updatedAt'],
   Servicos: ['id','name','category','price','description','createdAt','updatedAt'],
-  Eventos: ['id','title','clientName','date','time','type','location','value','status','notes','createdAt','updatedAt'],
+  Eventos: ['id','title','clientName','date','time','type','location','value','status','notes','googleEventId','googleCalendarId','createdAt','updatedAt'],
   Lancamentos: ['id','type','date','description','category','person','method','amount','status','sourceType','sourceId','createdAt','updatedAt'],
   ContasReceber: ['id','eventId','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
   Recebimentos: ['id','receivableId','eventId','date','amount','method','notes','cashTransactionId','createdAt','updatedAt'],
@@ -176,7 +176,7 @@ function saveRow_(sheetName,item,isUpdate) {
     if(h==='updatedAt') return now;
     if(dateFields[h]) return normalizeDate_(item[h]);
     if(h==='time') return normalizeTime_(item[h]);
-    return item[h]===undefined?'':item[h];
+    return item[h]===undefined ? (rowIndex>0 ? rows[rowIndex-1][headers.indexOf(h)] : '') : item[h];
   });
 
   if(rowIndex<0) sh.appendRow(record);
@@ -187,7 +187,10 @@ function saveRow_(sheetName,item,isUpdate) {
   headers.forEach((h,i)=>{
     if(dateFields[h] || h==='time') sh.getRange(rowIndex<0 ? sh.getLastRow() : rowIndex, i+1).setNumberFormat('@');
   });
-  if(sheetName==='Eventos') syncReceivableForEvent_(item);
+  if(sheetName==='Eventos') {
+    syncReceivableForEvent_(item);
+    syncGoogleCalendarEvent_(item, rowIndex > 0 ? 'update' : 'create');
+  }
   if(sheetName==='Recebimentos') syncReceivableFromReceipts_(item.receivableId);
   if(sheetName==='Recebimentos') syncReceiptCash_(item, isUpdate);
   if(sheetName==='Pagamentos') syncPayableFromPayments_(item.payableId);
@@ -223,7 +226,125 @@ function syncReceivableFromReceipts_(receivableId) {
   }
 }
 function findRowById_(sheetName,id){ const sh=ss_().getSheetByName(sheetName); if(!sh||sh.getLastRow()<2)return -1; const vals=sh.getDataRange().getValues(); for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)) return i+1; return -1; }
-function deleteRow_(sheetName,id) { if(!id)throw new Error('Identificador ausente.');const sh=ss_().getSheetByName(sheetName);if(!sh)throw new Error('Aba não encontrada.');const vals=sh.getDataRange().getValues(), headers=vals[0].map(String);for(let i=1;i<vals.length;i++)if(String(vals[i][0])===String(id)){const deleted=headers.reduce((o,h,j)=>(o[h]=vals[i][j],o),{});sh.deleteRow(i+1);if(sheetName==='Recebimentos'){syncReceivableFromReceipts_(deleted.receivableId); deleteCashBySource_('receivable', id);} if(sheetName==='Pagamentos'){syncPayableFromPayments_(deleted.payableId); deleteCashBySource_('payable', id);} return;}throw new Error('Registro não encontrado.'); }
+function deleteRow_(sheetName,id) {
+  if(!id)throw new Error('Identificador ausente.');
+  const sh=ss_().getSheetByName(sheetName);
+  if(!sh)throw new Error('Aba não encontrada.');
+  const vals=sh.getDataRange().getValues(), headers=vals[0].map(String);
+  for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)){
+    const deleted=headers.reduce((o,h,j)=>(o[h]=vals[i][j],o),{});
+    if(sheetName==='Eventos') deleteGoogleCalendarEvent_(deleted.googleEventId, deleted.googleCalendarId);
+    sh.deleteRow(i+1);
+    if(sheetName==='Recebimentos'){syncReceivableFromReceipts_(deleted.receivableId); deleteCashBySource_('receivable', id);}
+    if(sheetName==='Pagamentos'){syncPayableFromPayments_(deleted.payableId); deleteCashBySource_('payable', id);}
+    return;
+  }
+  throw new Error('Registro não encontrado.');
+}
+
+function googleCalendar_(){
+  const props=PropertiesService.getScriptProperties();
+  const id=props.getProperty('GOOGLE_CALENDAR_ID');
+  if(id) return CalendarApp.getCalendarById(id);
+  const cal=CalendarApp.getDefaultCalendar();
+  if(!cal) throw new Error('Não foi possível acessar o Google Agenda padrão. Autorize o acesso ao Google Calendar no Apps Script.');
+  props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
+  return cal;
+}
+
+function eventDateTime_(dateStr,timeStr){
+  const d=String(dateStr||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!d) throw new Error('Data do evento inválida para o Google Agenda: '+dateStr);
+  const y=Number(d[1]), m=Number(d[2])-1, day=Number(d[3]);
+  const t=String(timeStr||'').match(/^(\d{1,2}):(\d{2})/);
+  if(!t) return new Date(y,m,day);
+  return new Date(y,m,day,Number(t[1]),Number(t[2]),0,0);
+}
+
+function googleEventDescription_(event){
+  const lines=[];
+  if(event.clientName) lines.push('Cliente: '+event.clientName);
+  if(event.type) lines.push('Tipo: '+event.type);
+  if(event.value!==undefined && event.value!=='') lines.push('Valor contratado: R$ '+Number(event.value||0).toFixed(2).replace('.',','));
+  if(event.notes) lines.push('Observações: '+event.notes);
+  lines.push('FotoGestor ID: '+event.id);
+  return lines.join('\n');
+}
+
+function saveGoogleEventIds_(eventId, googleEventId, calendarId){
+  const sh=ss_().getSheetByName('Eventos'); if(!sh) return;
+  const row=findRowById_('Eventos',eventId); if(row<0) return;
+  const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
+  const ec=h.indexOf('googleEventId'), cc=h.indexOf('googleCalendarId');
+  if(ec>=0) sh.getRange(row,ec+1).setValue(googleEventId||'');
+  if(cc>=0) sh.getRange(row,cc+1).setValue(calendarId||'');
+}
+
+function syncGoogleCalendarEvent_(event, mode){
+  if(!event || !event.id || !event.date) return;
+  const cal=googleCalendar_();
+  const calendarId=cal.getId();
+  let googleEventId=String(event.googleEventId||'');
+  let gEvent=null;
+  if(googleEventId){
+    try { gEvent=cal.getEventById(googleEventId); } catch(e) { gEvent=null; }
+  }
+  const title=String(event.title||event.type||'Evento FotoGestor');
+  const description=googleEventDescription_(event);
+  const location=String(event.location||'');
+  const hasTime=!!normalizeTime_(event.time);
+  if(!gEvent){
+    if(hasTime){
+      const start=eventDateTime_(event.date,event.time);
+      const end=new Date(start.getTime()+60*60*1000);
+      gEvent=cal.createEvent(title,start,end,{description:description,location:location});
+    } else {
+      const day=eventDateTime_(event.date,'');
+      gEvent=cal.createAllDayEvent(title,day,{description:description,location:location});
+    }
+    googleEventId=gEvent.getId();
+    saveGoogleEventIds_(event.id,googleEventId,calendarId);
+    return;
+  }
+
+  // Se mudou de evento com horário para sem horário (ou vice-versa), recriamos.
+  try {
+    if(hasTime){
+      const start=eventDateTime_(event.date,event.time);
+      const end=new Date(start.getTime()+60*60*1000);
+      gEvent.setTitle(title);
+      gEvent.setTime(start,end);
+    } else {
+      const day=eventDateTime_(event.date,'');
+      gEvent.setTitle(title);
+      gEvent.setAllDayDate(day);
+    }
+    gEvent.setLocation(location);
+    gEvent.setDescription(description);
+    saveGoogleEventIds_(event.id,gEvent.getId(),calendarId);
+  } catch(e){
+    // Alguns eventos do Google não permitem a conversão de tipo; recria de forma segura.
+    try { gEvent.deleteEvent(); } catch(ignore) {}
+    let recreated;
+    if(hasTime){
+      const start=eventDateTime_(event.date,event.time);
+      recreated=cal.createEvent(title,start,new Date(start.getTime()+60*60*1000),{description:description,location:location});
+    } else {
+      recreated=cal.createAllDayEvent(title,eventDateTime_(event.date,''),{description:description,location:location});
+    }
+    saveGoogleEventIds_(event.id,recreated.getId(),calendarId);
+  }
+}
+
+function deleteGoogleCalendarEvent_(googleEventId,calendarId){
+  if(!googleEventId) return;
+  try {
+    const cal=calendarId ? CalendarApp.getCalendarById(String(calendarId)) : googleCalendar_();
+    const ev=cal && cal.getEventById(String(googleEventId));
+    if(ev) ev.deleteEvent();
+  } catch(e) { Logger.log('Não foi possível excluir evento do Google Agenda: '+e); }
+}
+
 function upsertCash_(sourceType, sourceId, tx){
   ensureStructure_(); const sh=ss_().getSheetByName('Lancamentos'); const headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String); const vals=sh.getDataRange().getValues(); const si=headers.indexOf('sourceId'), st=headers.indexOf('sourceType'); let row=-1;
   for(let i=1;i<vals.length;i++) if(String(vals[i][st]||'')===sourceType && String(vals[i][si]||'')===String(sourceId)){row=i+1;break;}
