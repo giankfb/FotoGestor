@@ -95,7 +95,6 @@ const entities = {
       ['dueDate', 'Vencimento', 'date', true],
       ['amount', 'Valor total (R$)', 'number', true],
       ['paid', 'Valor recebido (R$)', 'number'],
-      ['method', 'Forma de pagamento', 'select'],
       ['status', 'Situação', 'select']
     ]
   },

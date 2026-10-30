@@ -242,6 +242,15 @@ function deleteRow_(sheetName,id) {
   throw new Error('Registro não encontrado.');
 }
 
+function authorizeGoogleCalendar(){
+  // Execute esta função uma vez no editor do Apps Script para conceder
+  // explicitamente a permissão de acesso ao Google Calendar.
+  const cal = CalendarApp.getDefaultCalendar();
+  if(!cal) throw new Error('Não foi possível acessar o Google Agenda padrão.');
+  PropertiesService.getScriptProperties().setProperty('GOOGLE_CALENDAR_ID', cal.getId());
+  return 'Google Agenda autorizado: ' + cal.getName();
+}
+
 function googleCalendar_(){
   const props=PropertiesService.getScriptProperties();
   const id=props.getProperty('GOOGLE_CALENDAR_ID');
