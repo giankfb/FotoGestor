@@ -246,28 +246,34 @@ function deleteRow_(sheetName,id) {
   throw new Error('Registro não encontrado.');
 }
 
+function findEventosCalendar_(){
+  const NAME = 'eventos';
+  // Não usamos a agenda principal como fallback: o FotoGestor deve trabalhar
+  // exclusivamente com a agenda de trabalho chamada "eventos".
+  let calendars=[];
+  try { calendars=CalendarApp.getCalendarsByName(NAME) || []; } catch(e) { calendars=[]; }
+  if(!calendars.length){
+    try { calendars=CalendarApp.getOwnedCalendarsByName(NAME) || []; } catch(e) { calendars=[]; }
+  }
+  // Comparação sem diferenciar maiúsculas/minúsculas, para evitar problemas
+  // caso o nome tenha sido digitado como "Eventos", "EVENTOS", etc.
+  const wanted=NAME.toLowerCase();
+  const cal=calendars.find(c=>String(c.getName()||'').trim().toLowerCase()===wanted);
+  if(!cal) throw new Error('A agenda "eventos" não foi encontrada. Crie/compartilhe uma agenda com esse nome no Google Calendar e tente novamente. A agenda principal não será usada pelo FotoGestor.');
+  return cal;
+}
+
 function authorizeGoogleCalendar(){
   const props=PropertiesService.getScriptProperties();
-  const calendars=CalendarApp.getOwnedCalendarsByName('eventos');
-  const cal=calendars && calendars.length ? calendars[0] : CalendarApp.getDefaultCalendar();
-  if(!cal) throw new Error('Não foi possível acessar o Google Agenda.');
+  const cal=findEventosCalendar_();
   props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
   props.setProperty('GOOGLE_CALENDAR_NAME', cal.getName());
-  return 'Google Agenda autorizado: ' + cal.getName();
+  return 'Google Agenda autorizada: ' + cal.getName();
 }
 
 function googleCalendar_(){
   const props=PropertiesService.getScriptProperties();
-  const named=CalendarApp.getOwnedCalendarsByName('eventos');
-  if(named && named.length){
-    props.setProperty('GOOGLE_CALENDAR_ID', named[0].getId());
-    props.setProperty('GOOGLE_CALENDAR_NAME', named[0].getName());
-    return named[0];
-  }
-  const id=props.getProperty('GOOGLE_CALENDAR_ID');
-  if(id){ const existing=CalendarApp.getCalendarById(id); if(existing) return existing; }
-  const cal=CalendarApp.getDefaultCalendar();
-  if(!cal) throw new Error('Não foi possível acessar o Google Agenda. Autorize o acesso ao Google Calendar no Apps Script.');
+  const cal=findEventosCalendar_();
   props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
   props.setProperty('GOOGLE_CALENDAR_NAME', cal.getName());
   return cal;
