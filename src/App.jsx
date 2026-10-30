@@ -138,6 +138,7 @@ const emptyData = () => ({
   receivable: [],
   payable: [],
   receipts: [],
+  audits: [],
   settings: { studioName: 'Meu Estúdio de Fotografia' }
 });
 
@@ -242,9 +243,10 @@ function App() {
   const [mobile, setMobile] = useState(false);
   const [period, setPeriod] = useState(currentMonth());
   const [paymentModal, setPaymentModal] = useState(null);
+  const [deleteEventModal, setDeleteEventModal] = useState(null);
 
-  const refresh = async (showLoading = true) => {
-    if (showLoading) setLoading(true);
+  const refresh = async () => {
+    setLoading(true);
     setError('');
 
     try {
@@ -268,6 +270,7 @@ function App() {
           ...(item.dueDate !== undefined ? { dueDate: normalizeDateValue(item.dueDate) } : {})
         }));
       }
+      normalized.receipts = (normalized.receipts || []).filter(r => String(r.status || '').toLowerCase() !== 'estornado');
       setData(normalized);
     } catch (e) {
       setError(e.message);
@@ -338,8 +341,7 @@ function App() {
 
       setModal(null);
       setNotice('Registro salvo.');
-      // Atualiza os dados em segundo plano, sem bloquear a interface.
-      refresh(false);
+      await refresh();
     } catch (e) {
       setError(e.message);
     }
@@ -353,13 +355,13 @@ function App() {
       await api(isUpdate ? 'update' : 'create', { entity, item: next });
       setPaymentModal(null);
       setNotice('Recebimento registrado.');
-      refresh(false);
+      await refresh();
     } catch (e) { setError(e.message); }
   };
 
   const removePayment = async payment => {
     if (!confirm('Excluir este pagamento? O saldo da conta e o caixa serão recalculados.')) return;
-    try { await api('delete', { entity: payment.paymentType === 'payable' ? 'payments' : 'receipts', id: payment.id }); setNotice('Pagamento excluído.'); refresh(false); }
+    try { await api('delete', { entity: payment.paymentType === 'payable' ? 'payments' : 'receipts', id: payment.id }); await refresh(); setNotice('Pagamento excluído.'); }
     catch (e) { setError(e.message); }
   };
 
@@ -375,23 +377,53 @@ function App() {
       item: newClient
     });
 
-    refresh(false);
+    await refresh();
     setNotice('Cliente cadastrado com sucesso.');
     return newClient;
   };
 
   const del = async (key, item) => {
-    if (!confirm(`Excluir “${item.name || item.title || item.description || item.person || 'este registro'}”?`)) {
+    if (key === 'events') {
+      const account = (data.receivable || []).find(x => String(x.eventId || '') === String(item.id));
+      const receipts = account
+        ? (data.receipts || []).filter(r => String(r.receivableId || '') === String(account.id))
+        : [];
+      if (receipts.length) {
+        setDeleteEventModal({ event: item, account, receipts });
+        return;
+      }
+      if (!confirm(`Excluir “${item.name || item.title || 'este evento'}”?\n\nO evento será removido da Agenda e do Google Agenda, e a conta a receber vinculada também será encerrada.`)) return;
+      try {
+        await api('deleteEvent', { eventId: item.id, mode: 'excluir' });
+        await refresh();
+        setNotice('Evento excluído e conta a receber removida.');
+      } catch (e) { setError(e.message); }
       return;
     }
 
+    if (!confirm(`Excluir “${item.name || item.title || item.description || item.person || 'este registro'}”?`)) return;
     try {
       await api('delete', { entity: key, id: item.id });
+      await refresh();
       setNotice('Registro excluído.');
-      refresh(false);
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const confirmDeleteEvent = async mode => {
+    if (!deleteEventModal) return;
+    const { event, receipts } = deleteEventModal;
+    try {
+      const result = await api('deleteEvent', { eventId: event.id, mode });
+      setDeleteEventModal(null);
+      await refresh();
+      if (mode === 'estornar') {
+        setNotice(`Evento excluído. ${receipts.length} recebimento(s), total de ${money(result.totalReceived)}, foram estornados e retirados do Caixa. O histórico ficou registrado na Auditoria.`);
+      } else {
+        setNotice(`Evento excluído. Os recebimentos (${money(result.totalReceived)}) foram mantidos no Caixa e o histórico ficou registrado na Auditoria.`);
+      }
+    } catch (e) { setError(e.message); }
   };
 
   const tx = data.transactions || [];
@@ -714,6 +746,16 @@ function App() {
         </div>
       </main>
 
+      {deleteEventModal && (
+        <EventDeleteModal
+          event={deleteEventModal.event}
+          account={deleteEventModal.account}
+          receipts={deleteEventModal.receipts}
+          close={() => setDeleteEventModal(null)}
+          onChoose={confirmDeleteEvent}
+        />
+      )}
+
       {paymentModal && (
         <PaymentModal
           account={paymentModal.account}
@@ -993,6 +1035,38 @@ function RecordModal({
       </form>
     </div>
   );
+}
+
+function EventDeleteModal({ event, account, receipts, close, onChoose }) {
+  const total = receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && close()}>
+    <div className="modal">
+      <div className="modal-head">
+        <div>
+          <p className="eyebrow">EXCLUSÃO DO EVENTO</p>
+          <h2>{event.title || 'Evento fotográfico'}</h2>
+          <small>{event.clientName || 'Cliente não informado'} · {formatDate(event.date)}</small>
+        </div>
+        <button type="button" className="icon-btn" onClick={close}><X /></button>
+      </div>
+      <div className="panel" style={{marginBottom:14}}>
+        <b>Este evento possui {receipts.length} recebimento{receipts.length === 1 ? '' : 's'} registrado{receipts.length === 1 ? '' : 's'}.</b>
+        <div style={{marginTop:7}}>Total recebido: <strong>{money(total)}</strong></div>
+        <small style={{display:'block',marginTop:7,color:'#7b8494'}}>Escolha como o sistema deve tratar o financeiro antes de excluir o evento.</small>
+      </div>
+      <div className="delete-choice-grid">
+        <button className="choice-btn danger-choice" onClick={() => onChoose('estornar')}>
+          <b>Estornar recebimentos</b>
+          <span>Exclui o evento, estorna os recebimentos e remove essas entradas do Caixa. O estorno fica registrado na Auditoria.</span>
+        </button>
+        <button className="choice-btn keep-choice" onClick={() => onChoose('manter')}>
+          <b>Excluir evento e manter recebimentos</b>
+          <span>Exclui o evento, mas mantém os valores já recebidos no Caixa e preserva o histórico financeiro.</span>
+        </button>
+      </div>
+      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={close}>Cancelar</button></div>
+    </div>
+  </div>;
 }
 
 function PaymentModal({ account, receipts, type='receivable', close, save, remove }) {
