@@ -52,7 +52,6 @@ function ensureStructure_() {
 
 function syncReceivableForEvent_(event) {
   if(!event || !event.id) return;
-  ensureStructure_();
   const sh=ss_().getSheetByName('ContasReceber');
   const headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
   const idx={}; headers.forEach((h,i)=>idx[h]=i);
@@ -233,7 +232,27 @@ function deleteRow_(sheetName,id) {
   const vals=sh.getDataRange().getValues(), headers=vals[0].map(String);
   for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)){
     const deleted=headers.reduce((o,h,j)=>(o[h]=vals[i][j],o),{});
-    if(sheetName==='Eventos') deleteGoogleCalendarEvent_(deleted.googleEventId, deleted.googleCalendarId);
+    if(sheetName==='Eventos') {
+      // Uma conta a receber pertence ao evento. Ao excluir o evento, remova
+      // também a conta somente se ainda não houver recebimentos registrados.
+      // Assim o histórico financeiro nunca é apagado silenciosamente.
+      const cr=ss_().getSheetByName('ContasReceber');
+      if(cr && cr.getLastRow()>1){
+        const rv=cr.getDataRange().getValues(), rh=rv[0].map(String);
+        const eventCol=rh.indexOf('eventId'), idCol=rh.indexOf('id');
+        for(let j=rv.length-1;j>=1;j--){
+          if(eventCol>=0 && String(rv[j][eventCol]||'')===String(id)){
+            const receivableId=String(rv[j][idCol]||'');
+            const received=receiptsTotalFor_(receivableId);
+            if(received>0){
+              throw new Error('Este evento possui recebimentos registrados (R$ '+received.toFixed(2).replace('.',',')+'). Estorne ou exclua os recebimentos antes de excluir o evento.');
+            }
+            cr.deleteRow(j+1);
+          }
+        }
+      }
+      deleteGoogleCalendarEvent_(deleted.googleEventId, deleted.googleCalendarId);
+    }
     sh.deleteRow(i+1);
     if(sheetName==='Recebimentos'){syncReceivableFromReceipts_(deleted.receivableId); deleteCashBySource_('receivable', id);}
     if(sheetName==='Pagamentos'){syncPayableFromPayments_(deleted.payableId); deleteCashBySource_('payable', id);}

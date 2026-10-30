@@ -243,8 +243,8 @@ function App() {
   const [period, setPeriod] = useState(currentMonth());
   const [paymentModal, setPaymentModal] = useState(null);
 
-  const refresh = async () => {
-    setLoading(true);
+  const refresh = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
 
     try {
@@ -338,7 +338,8 @@ function App() {
 
       setModal(null);
       setNotice('Registro salvo.');
-      await refresh();
+      // Atualiza os dados em segundo plano, sem bloquear a interface.
+      refresh(false);
     } catch (e) {
       setError(e.message);
     }
@@ -352,13 +353,13 @@ function App() {
       await api(isUpdate ? 'update' : 'create', { entity, item: next });
       setPaymentModal(null);
       setNotice('Recebimento registrado.');
-      await refresh();
+      refresh(false);
     } catch (e) { setError(e.message); }
   };
 
   const removePayment = async payment => {
     if (!confirm('Excluir este pagamento? O saldo da conta e o caixa serão recalculados.')) return;
-    try { await api('delete', { entity: payment.paymentType === 'payable' ? 'payments' : 'receipts', id: payment.id }); await refresh(); setNotice('Pagamento excluído.'); }
+    try { await api('delete', { entity: payment.paymentType === 'payable' ? 'payments' : 'receipts', id: payment.id }); setNotice('Pagamento excluído.'); refresh(false); }
     catch (e) { setError(e.message); }
   };
 
@@ -374,7 +375,7 @@ function App() {
       item: newClient
     });
 
-    await refresh();
+    refresh(false);
     setNotice('Cliente cadastrado com sucesso.');
     return newClient;
   };
@@ -386,8 +387,8 @@ function App() {
 
     try {
       await api('delete', { entity: key, id: item.id });
-      await refresh();
       setNotice('Registro excluído.');
+      refresh(false);
     } catch (e) {
       setError(e.message);
     }
