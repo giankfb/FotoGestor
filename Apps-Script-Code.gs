@@ -389,7 +389,8 @@ function syncGoogleCalendarColorForEventId_(eventId){
 function googleEventColor_(event){
   if(!event || String(event.status||'').toLowerCase()==='cancelado') return CalendarApp.EventColor.GRAY;
   const value=Number(event.value||0);
-  if(value<=0) return CalendarApp.EventColor.GRAY;
+  // Evento sem financeiro ainda é pendente: começa em vermelho.
+  if(value<=0) return CalendarApp.EventColor.RED;
   const sh=ss_().getSheetByName('ContasReceber');
   if(!sh || sh.getLastRow()<2) return CalendarApp.EventColor.RED;
   const vals=sh.getDataRange().getValues(), h=vals[0].map(String), ec=h.indexOf('eventId'), sc=h.indexOf('status');
@@ -400,7 +401,7 @@ function googleEventColor_(event){
     if(status==='parcial') return CalendarApp.EventColor.YELLOW;
     return CalendarApp.EventColor.RED;
   }
-  return CalendarApp.EventColor.GRAY;
+  return CalendarApp.EventColor.RED;
 }
 
 function setGoogleEventColor_(gEvent,event){

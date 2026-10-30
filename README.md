@@ -61,3 +61,10 @@ npm run build
 - Ao editar o evento importado e informar um valor contratado maior que zero, o backend cria/atualiza automaticamente o Contas a Receber, como nos eventos cadastrados diretamente.
 - Evento importado recebe uma observação informando que veio do Google e precisa ser completado no FotoGestor.
 - A partir daqui, o FotoGestor permanece como sistema principal; Google Agenda funciona como consulta/backup rápido.
+
+## V14.1 — cor inicial dos eventos
+- Eventos sem recebimento/financeiro começam em vermelho no Google Calendar.
+- Pagamento parcial permanece amarelo.
+- Pagamento total permanece verde.
+- Eventos cancelados permanecem cinza.
+- Eventos de dia inteiro continuam sendo importados/criados como eventos de dia inteiro.
