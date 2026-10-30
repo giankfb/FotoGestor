@@ -63,8 +63,10 @@ const entities = {
     fields: [
       ['title', 'Evento', 'text', true],
       ['clientName', 'Cliente', 'client', true],
-      ['date', 'Data', 'date', true],
-      ['time', 'Horário', 'time'],
+      ['date', 'Data de início', 'date', true],
+      ['endDate', 'Data de término', 'date'],
+      ['time', 'Horário de início', 'time'],
+      ['endTime', 'Horário de término', 'time'],
       ['type', 'Tipo de evento', 'text'],
       ['location', 'Local', 'text'],
       ['value', 'Valor contratado (R$)', 'number'],
@@ -519,7 +521,7 @@ function App() {
                     setActive('events');
                     setModal({
                       entity: 'events',
-                      item: { date: today(), status: 'Confirmado' }
+                      item: { date: today(), endDate: today(), status: 'Confirmado' }
                     });
                   }}
                 >
@@ -880,7 +882,9 @@ function RecordModal({
 }) {
   const [form, setForm] = useState(() => ({
     ...item,
-    time: item.time ? formatTime(item.time) : ''
+    endDate: item.endDate || item.date || '',
+    time: item.time ? formatTime(item.time) : '',
+    endTime: item.endTime ? formatTime(item.endTime) : ''
   }));
 
   const [showNewClient, setShowNewClient] = useState(false);
@@ -914,7 +918,7 @@ function RecordModal({
 
     setForm(current => ({
       ...current,
-      [key]: key === 'time' ? (formatTime(value) || value) : value
+      [key]: (key === 'time' || key === 'endTime') ? (formatTime(value) || value) : value
     }));
   };
 
@@ -957,8 +961,12 @@ function RecordModal({
           e.preventDefault();
 
           const payload = { ...form };
-          if (entity === 'events' && payload.time) {
-            payload.time = formatTime(payload.time) || payload.time;
+          if (entity === 'events') {
+            payload.date = normalizeDateValue(payload.date || today());
+            payload.endDate = normalizeDateValue(payload.endDate || payload.date);
+            if (payload.endDate < payload.date) payload.endDate = payload.date;
+            if (payload.time) payload.time = formatTime(payload.time) || payload.time;
+            if (payload.endTime) payload.endTime = formatTime(payload.endTime) || payload.endTime;
           }
 
           save(entity, payload);

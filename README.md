@@ -68,3 +68,13 @@ npm run build
 - Pagamento total permanece verde.
 - Eventos cancelados permanecem cinza.
 - Eventos de dia inteiro continuam sendo importados/criados como eventos de dia inteiro.
+
+## V15 — sincronização agenda
+- Google Calendar fixado na agenda `02 EVENTOS`.
+- Valores financeiros nunca são enviados ao Google Calendar.
+- FotoGestor continua sendo a fonte oficial do financeiro.
+- Sincronização bidirecional dos dados de agenda: título, data, data final, horário, horário final e local.
+- A leitura do FotoGestor atualiza automaticamente esses campos a partir do evento correspondente no Google.
+- Eventos podem ocupar vários dias como um único cadastro, usando Data de início e Data de término.
+- Eventos de dia inteiro continuam como eventos de dia inteiro no Google.
+- Cores continuam sob controle do FotoGestor: vermelho pendente, amarelo parcial, verde pago e cinza cancelado.
