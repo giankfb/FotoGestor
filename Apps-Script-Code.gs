@@ -247,7 +247,7 @@ function deleteRow_(sheetName,id) {
 }
 
 function findEventosCalendar_(){
-  const NAME = 'eventos';
+  const NAME = '02 eventos';
   // Não usamos a agenda principal como fallback: o FotoGestor deve trabalhar
   // exclusivamente com a agenda de trabalho chamada "eventos".
   let calendars=[];
@@ -443,7 +443,7 @@ function importGoogleCalendarEvents_(data){
     const item={
       id:Utilities.getUuid(), title:ev.getTitle()||'Evento importado', clientName:'', date:Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd'),
       time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'), type:'', location:ev.getLocation()||'', value:0,
-      status:'Confirmado', notes:ev.getDescription()||'', googleEventId:ev.getId(), googleCalendarId:cal.getId(), createdAt:new Date(), updatedAt:new Date()
+      status:'Confirmado', notes:[ev.getDescription()||'', 'Importado do Google Agenda — informe cliente e valor contratado no FotoGestor.'].filter(Boolean).join('\n'), googleEventId:ev.getId(), googleCalendarId:cal.getId(), createdAt:new Date(), updatedAt:new Date()
     };
     saveRow_('Eventos',item,false); imported++;
   });

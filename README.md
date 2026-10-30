@@ -52,3 +52,12 @@ npm run build
 - O cadastro de contas mantém os campos de valor total e valor pago; o controle detalhado de parcelas, histórico de pagamentos e baixa integrada ao caixa é uma próxima etapa.
 - A versão atual não implementa login/autorização por usuário. Não armazene dados sensíveis antes de implementar esse controle.
 - O projeto original da associação deve permanecer em outro repositório e com seu próprio Apps Script e planilha.
+
+## V14 - correções de relatórios e importação
+- Relatórios restaurados para um formato simples e selecionável: Agenda, Datas disponíveis, Contas a receber, Contas a pagar e Caixa.
+- Relatórios filtráveis por período e prontos para impressão/PDF.
+- Importação do Google continua exclusiva da agenda "eventos".
+- Evento importado não cria cobrança automaticamente enquanto o valor contratado estiver zerado.
+- Ao editar o evento importado e informar um valor contratado maior que zero, o backend cria/atualiza automaticamente o Contas a Receber, como nos eventos cadastrados diretamente.
+- Evento importado recebe uma observação informando que veio do Google e precisa ser completado no FotoGestor.
+- A partir daqui, o FotoGestor permanece como sistema principal; Google Agenda funciona como consulta/backup rápido.

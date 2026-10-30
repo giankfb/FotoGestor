@@ -367,7 +367,7 @@ function App() {
     try {
       const result = await api('googleCalendarImport', { ids });
       setGoogleImportOpen(false);
-      setNotice(`${result.imported || 0} evento(s) importado(s) da agenda Eventos.`);
+      setNotice(`${result.imported || 0} evento(s) importado(s). Edite o evento para informar cliente e valor; o Contas a Receber será criado ao salvar um valor contratado.`);
       await refresh();
     } catch (e) { setError(e.message); }
   };
@@ -1136,75 +1136,158 @@ function PaymentModal({ account, receipts, type='receivable', close, save, remov
   </div>;
 }
 function Reports({ data, period, setPeriod }) {
-  const tx = (data.transactions || []).filter(x => (x.date || '').startsWith(period));
+  const [report, setReport] = useState('receivable');
+  const [from, setFrom] = useState(`${period}-01`);
+  const [to, setTo] = useState(() => {
+    const [y,m] = period.split('-').map(Number);
+    const d = new Date(y, m, 0);
+    return localISODate(d);
+  });
 
-  const income = tx
-    .filter(x => x.type === 'Entrada')
-    .reduce((sum, x) => sum + Number(x.amount || 0), 0);
+  useEffect(() => {
+    setFrom(`${period}-01`);
+    const [y,m] = period.split('-').map(Number);
+    setTo(localISODate(new Date(y, m, 0)));
+  }, [period]);
 
-  const expense = tx
-    .filter(x => x.type === 'Saída')
-    .reduce((sum, x) => sum + Number(x.amount || 0), 0);
+  const inPeriod = value => {
+    const d = normalizeDateValue(value);
+    return (!from || d >= from) && (!to || d <= to);
+  };
+
+  const titleMap = {
+    agenda: 'Agenda de eventos',
+    available: 'Datas disponíveis',
+    receivable: 'Contas a receber',
+    payable: 'Contas a pagar',
+    cash: 'Caixa'
+  };
+
+  const events = (data.events || [])
+    .filter(x => inPeriod(x.date))
+    .sort((a,b) => `${a.date} ${a.time||''}`.localeCompare(`${b.date} ${b.time||''}`));
+
+  const receivables = (data.receivable || [])
+    .filter(x => inPeriod(x.dueDate))
+    .sort((a,b) => String(a.dueDate||'').localeCompare(String(b.dueDate||'')));
+
+  const payables = (data.payable || [])
+    .filter(x => inPeriod(x.dueDate))
+    .sort((a,b) => String(a.dueDate||'').localeCompare(String(b.dueDate||'')));
+
+  const transactions = (data.transactions || [])
+    .filter(x => inPeriod(x.date))
+    .sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+
+  const pendingReceivables = receivables.filter(x => Number(x.amount||0) > Number(x.paid||0));
+  const pendingPayables = payables.filter(x => Number(x.amount||0) > Number(x.paid||0));
+  const income = transactions.filter(x => x.type === 'Entrada').reduce((s,x)=>s+Number(x.amount||0),0);
+  const expense = transactions.filter(x => x.type === 'Saída').reduce((s,x)=>s+Number(x.amount||0),0);
+
+  const printTitle = titleMap[report];
 
   return (
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">ANÁLISE DO NEGÓCIO</p>
-          <h1>Relatórios</h1>
-          <p>Visão financeira e pendências por período.</p>
+          <p className="eyebrow">RELATÓRIOS</p>
+          <h1>{printTitle}</h1>
+          <p>Relatórios simples, filtrados por período e prontos para impressão.</p>
         </div>
-        <input className="period-input" type="month" value={period} onChange={e => setPeriod(e.target.value)} />
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'flex-end'}}>
+          <label className="field" style={{minWidth:150}}>Relatório
+            <select value={report} onChange={e=>setReport(e.target.value)}>
+              <option value="agenda">Agenda</option>
+              <option value="available">Datas disponíveis</option>
+              <option value="receivable">Contas a receber</option>
+              <option value="payable">Contas a pagar</option>
+              <option value="cash">Caixa</option>
+            </select>
+          </label>
+          <label className="field">De
+            <input className="period-input" type="date" value={from} onChange={e=>setFrom(e.target.value)} />
+          </label>
+          <label className="field">Até
+            <input className="period-input" type="date" value={to} onChange={e=>setTo(e.target.value)} />
+          </label>
+        </div>
       </div>
 
-      <div className="stats-grid">
-        <Stat label="Entradas no período" value={money(income)} icon={ArrowDownToLine} tone="green" foot={period} />
-        <Stat label="Saídas no período" value={money(expense)} icon={ArrowUpFromLine} tone="orange" foot={period} />
-        <Stat label="Resultado do período" value={money(income - expense)} icon={ChartNoAxesCombined} tone="purple" foot="Entradas menos saídas" />
-        <Stat label="Eventos cadastrados" value={data.events?.filter(e => (e.date || '').startsWith(period)).length || 0} icon={CalendarDays} tone="blue" foot="No mês selecionado" />
-      </div>
-
-      <div className="dashboard-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <div><h2>Contas a receber</h2><p>Saldo pendente por cliente</p></div>
+      <section className="panel report-sheet">
+        <div className="panel-head">
+          <div>
+            <h2>FotoGestor</h2>
+            <p>{printTitle} · {formatDate(from)} até {formatDate(to)}</p>
           </div>
-          {(data.receivable || [])
-            .filter(x => Number(x.amount || 0) > Number(x.paid || 0))
-            .map(x => (
-              <div className="money-row" key={x.id}>
-                <span>{x.person} · {x.description}</span>
-                <b>{money(Number(x.amount) - Number(x.paid || 0))}</b>
-              </div>
-            ))}
-          {!data.receivable?.some(x => Number(x.amount || 0) > Number(x.paid || 0)) && (
-            <Empty text="Nenhuma conta pendente." />
-          )}
-        </section>
+          <button className="secondary-btn" onClick={()=>window.print()}>Imprimir / PDF</button>
+        </div>
 
-        <section className="panel">
-          <div className="panel-head">
-            <div><h2>Contas a pagar</h2><p>Saldo pendente por fornecedor</p></div>
-          </div>
-          {(data.payable || [])
-            .filter(x => Number(x.amount || 0) > Number(x.paid || 0))
-            .map(x => (
-              <div className="money-row" key={x.id}>
-                <span>{x.person} · {x.description}</span>
-                <b>{money(Number(x.amount) - Number(x.paid || 0))}</b>
-              </div>
-            ))}
-          {!data.payable?.some(x => Number(x.amount || 0) > Number(x.paid || 0)) && (
-            <Empty text="Nenhuma conta pendente." />
-          )}
-        </section>
-      </div>
+        {report === 'agenda' && (
+          <ReportTable headers={['Data','Horário','Evento','Cliente','Tipo','Local','Valor','Situação']} rows={events.map(x=>[
+            formatDate(x.date), formatTime(x.time)||'—', x.title||'—', x.clientName||'—', x.type||'—', x.location||'—', money(x.value), x.status||'—'
+          ])} empty="Nenhum evento no período." />
+        )}
 
-      <button className="secondary-btn" onClick={() => window.print()}>
-        Imprimir / salvar em PDF
-      </button>
+        {report === 'receivable' && (
+          <ReportTable headers={['Vencimento','Cliente','Descrição','Valor','Recebido','Saldo','Situação']} rows={receivables.map(x=>[
+            formatDate(x.dueDate), x.person||'—', x.description||'—', money(x.amount), money(x.paid), money(Number(x.amount||0)-Number(x.paid||0)), x.status||'—'
+          ])} empty="Nenhuma conta a receber no período." />
+        )}
+
+        {report === 'payable' && (
+          <ReportTable headers={['Vencimento','Fornecedor','Descrição','Valor','Pago','Saldo','Situação']} rows={payables.map(x=>[
+            formatDate(x.dueDate), x.person||'—', x.description||'—', money(x.amount), money(x.paid), money(Number(x.amount||0)-Number(x.paid||0)), x.status||'—'
+          ])} empty="Nenhuma conta a pagar no período." />
+        )}
+
+        {report === 'cash' && (
+          <>
+            <div className="stats-grid" style={{marginBottom:16}}>
+              <Stat label="Entradas" value={money(income)} icon={ArrowDownToLine} tone="green" foot="Período" />
+              <Stat label="Saídas" value={money(expense)} icon={ArrowUpFromLine} tone="orange" foot="Período" />
+              <Stat label="Saldo" value={money(income-expense)} icon={ChartNoAxesCombined} tone="purple" foot="Entradas − saídas" />
+            </div>
+            <ReportTable headers={['Data','Movimento','Descrição','Pessoa','Forma','Valor']} rows={transactions.map(x=>[
+              formatDate(x.date), x.type||'—', x.description||'—', x.person||'—', x.method||'—', money(x.amount)
+            ])} empty="Nenhum lançamento no período." />
+          </>
+        )}
+
+        {report === 'available' && <AvailableDatesReport events={data.events || []} from={from} to={to} />}
+      </section>
     </>
   );
+}
+
+function ReportTable({ headers, rows, empty }) {
+  return rows.length ? (
+    <div className="table-wrap">
+      <table>
+        <thead><tr>{headers.map(h=><th key={h}>{h}</th>)}</tr></thead>
+        <tbody>{rows.map((row,i)=><tr key={i}>{row.map((cell,j)=><td key={j}>{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  ) : <Empty text={empty} />;
+}
+
+function AvailableDatesReport({ events, from, to }) {
+  const occupied = new Set(events.filter(e=>inRange(e.date,from,to)).map(e=>normalizeDateValue(e.date)));
+  const dates=[];
+  if(from && to && from <= to) {
+    let d=new Date(`${from}T12:00:00`);
+    const end=new Date(`${to}T12:00:00`);
+    while(d<=end){
+      const iso=localISODate(d);
+      if([5,6].includes(d.getDay())) dates.push({iso,weekday:d.getDay()===5?'Sexta-feira':'Sábado',available:!occupied.has(iso)});
+      d.setDate(d.getDate()+1);
+    }
+  }
+  return <ReportTable headers={['Data','Dia','Situação']} rows={dates.map(x=>[formatDate(x.iso),x.weekday,x.available?'DISPONÍVEL':'OCUPADO'])} empty="Nenhuma sexta-feira ou sábado no período." />;
+}
+
+function inRange(value, from, to) {
+  const d=normalizeDateValue(value);
+  return (!from || d>=from) && (!to || d<=to);
 }
 
 function SettingsPage({ data, onSave }) {
