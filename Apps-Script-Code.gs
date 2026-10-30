@@ -237,12 +237,16 @@ function audit_(action, entity, entityId, description, details){
   const sh=ss_().getSheetByName('Auditoria');
   sh.appendRow([Utilities.getUuid(), new Date(), action, entity, entityId || '', description || '', details || '', new Date()]);
 }
-function findAccountByEvent_(eventId){
-  const sh=ss_().getSheetByName('ContasReceber'); if(!sh||sh.getLastRow()<2)return null;
+function findAccountsByEvent_(eventId){
+  const sh=ss_().getSheetByName('ContasReceber'); if(!sh||sh.getLastRow()<2)return [];
   const vals=sh.getDataRange().getValues(), h=vals[0].map(String), ei=h.indexOf('eventId');
-  if(ei<0)return null;
-  for(let i=1;i<vals.length;i++) if(String(vals[i][ei]||'')===String(eventId)) return h.reduce((o,k,j)=>(o[k]=vals[i][j],o),{});
-  return null;
+  if(ei<0)return [];
+  return vals.slice(1)
+    .map(r=>h.reduce((o,k,j)=>(o[k]=r[j],o),{}))
+    .filter(o=>String(o.eventId||'')===String(eventId));
+}
+function findAccountByEvent_(eventId){
+  return findAccountsByEvent_(eventId)[0] || null;
 }
 function activeReceiptsFor_(receivableId){
   const sh=ss_().getSheetByName('Recebimentos'); if(!sh||sh.getLastRow()<2)return [];
@@ -288,23 +292,36 @@ function deleteEventWithFinancialChoice_(data){
   if(!eventId)throw new Error('Identificador do evento ausente.');
   if(!['estornar','manter','excluir'].includes(mode))throw new Error('Opção de exclusão inválida.');
   const event=lookupAccount_('Eventos',eventId); if(!event)throw new Error('Evento não encontrado.');
-  const account=findAccountByEvent_(eventId);
-  const receivableId=account ? String(account.id||'') : '';
-  const receipts=activeReceiptsFor_(receivableId);
+
+  // Um evento deveria ter apenas uma conta a receber, mas versões anteriores
+  // podem ter deixado duplicidades. A exclusão financeira trata TODAS as
+  // contas vinculadas ao evento para nunca deixar uma cobrança órfã.
+  const accounts=findAccountsByEvent_(eventId);
+  const receivableIds=accounts.map(a=>String(a.id||'')).filter(Boolean);
+  const receipts=receivableIds.flatMap(id=>activeReceiptsFor_(id));
   const totalReceived=receipts.reduce((s,r)=>s+Number(r.amount||0),0);
 
+  if(mode==='excluir' && receipts.length){
+    throw new Error('Este evento possui recebimentos. Escolha estornar ou manter os recebimentos.');
+  }
+
   if(mode==='estornar'){
-    receipts.forEach(r=>{ setReceiptStatus_(r.id,'Estornado','Estorno por exclusão do evento'); deleteCashBySource_('receivable',r.id); });
-    deleteReceivableById_(receivableId);
-    audit_('Exclusão com estorno','Evento',eventId,'Evento excluído e recebimentos estornados',`Evento: ${event.title||'Evento'} · Recebimentos estornados: ${receipts.length} · Total: R$ ${totalReceived.toFixed(2).replace('.',',')}`);
+    receipts.forEach(r=>{
+      setReceiptStatus_(r.id,'Estornado','Estorno por exclusão do evento');
+      deleteCashBySource_('receivable',r.id);
+    });
+    receivableIds.forEach(deleteReceivableById_);
+    audit_('Exclusão com estorno','Evento',eventId,'Evento excluído e recebimentos estornados',`Evento: ${event.title||'Evento'} · Contas a receber removidas: ${accounts.length} · Recebimentos estornados: ${receipts.length} · Total: R$ ${totalReceived.toFixed(2).replace('.',',')}`);
   } else if(mode==='manter'){
-    clearReceiptEventLink_(receivableId);
-    detachReceivableFromEvent_(receivableId,totalReceived,Number(account?.amount||event.value||0));
-    audit_('Exclusão com manutenção financeira','Evento',eventId,'Evento excluído e recebimentos mantidos',`Evento: ${event.title||'Evento'} · Recebimentos mantidos: ${receipts.length} · Total: R$ ${totalReceived.toFixed(2).replace('.',',')}`);
+    receivableIds.forEach(id=>clearReceiptEventLink_(id));
+    accounts.forEach(account=>{
+      const paid=receipts.filter(r=>String(r.receivableId||'')===String(account.id||'')).reduce((s,r)=>s+Number(r.amount||0),0);
+      detachReceivableFromEvent_(String(account.id||''),paid,Number(account.amount||event.value||0));
+    });
+    audit_('Exclusão com manutenção financeira','Evento',eventId,'Evento excluído e recebimentos mantidos',`Evento: ${event.title||'Evento'} · Contas desvinculadas: ${accounts.length} · Recebimentos mantidos: ${receipts.length} · Total: R$ ${totalReceived.toFixed(2).replace('.',',')}`);
   } else {
-    if(receipts.length) throw new Error('Este evento possui recebimentos. Escolha estornar ou manter os recebimentos.');
-    deleteReceivableById_(receivableId);
-    audit_('Exclusão','Evento',eventId,'Evento excluído sem recebimentos',`Evento: ${event.title||'Evento'}`);
+    receivableIds.forEach(deleteReceivableById_);
+    audit_('Exclusão','Evento',eventId,'Evento excluído sem recebimentos',`Evento: ${event.title||'Evento'} · Contas a receber removidas: ${accounts.length}`);
   }
 
   const row=findRowById_('Eventos',eventId);
@@ -315,7 +332,7 @@ function deleteEventWithFinancialChoice_(data){
     const googleCalendarId=h.indexOf('googleCalendarId')>=0?vals[h.indexOf('googleCalendarId')]:'';
     deleteGoogleCalendarEvent_(googleEventId,googleCalendarId); sh.deleteRow(row);
   }
-  return {eventId,eventTitle:event.title||'Evento',mode,receiptsCount:receipts.length,totalReceived};
+  return {eventId,eventTitle:event.title||'Evento',mode,accountsCount:accounts.length,receiptsCount:receipts.length,totalReceived};
 }
 
 function findRowById_(sheetName,id){ const sh=ss_().getSheetByName(sheetName); if(!sh||sh.getLastRow()<2)return -1; const vals=sh.getDataRange().getValues(); for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)) return i+1; return -1; }
