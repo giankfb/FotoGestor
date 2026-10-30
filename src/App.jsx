@@ -138,7 +138,6 @@ const emptyData = () => ({
   receivable: [],
   payable: [],
   receipts: [],
-  audits: [],
   settings: { studioName: 'Meu Estúdio de Fotografia' }
 });
 
@@ -243,7 +242,7 @@ function App() {
   const [mobile, setMobile] = useState(false);
   const [period, setPeriod] = useState(currentMonth());
   const [paymentModal, setPaymentModal] = useState(null);
-  const [deleteEventModal, setDeleteEventModal] = useState(null);
+  const [googleImportOpen, setGoogleImportOpen] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
@@ -270,7 +269,6 @@ function App() {
           ...(item.dueDate !== undefined ? { dueDate: normalizeDateValue(item.dueDate) } : {})
         }));
       }
-      normalized.receipts = (normalized.receipts || []).filter(r => String(r.status || '').toLowerCase() !== 'estornado');
       setData(normalized);
     } catch (e) {
       setError(e.message);
@@ -365,6 +363,15 @@ function App() {
     catch (e) { setError(e.message); }
   };
 
+  const importGoogleEvents = async ids => {
+    try {
+      const result = await api('googleCalendarImport', { ids });
+      setGoogleImportOpen(false);
+      setNotice(`${result.imported || 0} evento(s) importado(s) da agenda Eventos.`);
+      await refresh();
+    } catch (e) { setError(e.message); }
+  };
+
   const createClient = async client => {
     const newClient = {
       ...client,
@@ -383,26 +390,10 @@ function App() {
   };
 
   const del = async (key, item) => {
-    if (key === 'events') {
-      // Pode haver mais de uma conta antiga vinculada ao mesmo evento.
-      // Considere todas para decidir se é necessário perguntar sobre os recebimentos.
-      const accounts = (data.receivable || []).filter(x => String(x.eventId || '') === String(item.id));
-      const accountIds = new Set(accounts.map(x => String(x.id || '')));
-      const receipts = (data.receipts || []).filter(r => accountIds.has(String(r.receivableId || '')) && String(r.status || '').toLowerCase() !== 'estornado');
-      if (receipts.length) {
-        setDeleteEventModal({ event: item, account: accounts[0] || null, accounts, receipts });
-        return;
-      }
-      if (!confirm(`Excluir “${item.name || item.title || 'este evento'}”?\n\nO evento será removido da Agenda e do Google Agenda, e a conta a receber vinculada também será encerrada.`)) return;
-      try {
-        await api('deleteEvent', { eventId: item.id, mode: 'excluir' });
-        await refresh();
-        setNotice('Evento excluído e conta a receber removida.');
-      } catch (e) { setError(e.message); }
+    if (!confirm(`Excluir “${item.name || item.title || item.description || item.person || 'este registro'}”?`)) {
       return;
     }
 
-    if (!confirm(`Excluir “${item.name || item.title || item.description || item.person || 'este registro'}”?`)) return;
     try {
       await api('delete', { entity: key, id: item.id });
       await refresh();
@@ -410,21 +401,6 @@ function App() {
     } catch (e) {
       setError(e.message);
     }
-  };
-
-  const confirmDeleteEvent = async mode => {
-    if (!deleteEventModal) return;
-    const { event, receipts } = deleteEventModal;
-    try {
-      const result = await api('deleteEvent', { eventId: event.id, mode });
-      setDeleteEventModal(null);
-      await refresh();
-      if (mode === 'estornar') {
-        setNotice(`Evento excluído. ${receipts.length} recebimento(s), total de ${money(result.totalReceived)}, foram estornados e retirados do Caixa. O histórico ficou registrado na Auditoria.`);
-      } else {
-        setNotice(`Evento excluído. Os recebimentos (${money(result.totalReceived)}) foram mantidos no Caixa e o histórico ficou registrado na Auditoria.`);
-      }
-    } catch (e) { setError(e.message); }
   };
 
   const tx = data.transactions || [];
@@ -657,15 +633,22 @@ function App() {
                   <p>Gerencie os registros do seu negócio em um só lugar.</p>
                 </div>
                 {entities[active] && (
-                  <button
-                    className="primary-btn"
-                    onClick={() => setModal({
-                      entity: active,
-                      item: { date: today(), status: 'Pendente', type: 'Entrada' }
-                    })}
-                  >
-                    <Plus size={17} /> Novo registro
-                  </button>
+                  <div style={{display:'flex', gap:8, flexWrap:'wrap', justifyContent:'flex-end'}}>
+                    {active === 'events' && (
+                      <button className="secondary-btn" onClick={() => setGoogleImportOpen(true)}>
+                        <RefreshCw size={15} /> Importar do Google
+                      </button>
+                    )}
+                    <button
+                      className="primary-btn"
+                      onClick={() => setModal({
+                        entity: active,
+                        item: { date: today(), status: 'Pendente', type: 'Entrada' }
+                      })}
+                    >
+                      <Plus size={17} /> Novo registro
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -747,13 +730,10 @@ function App() {
         </div>
       </main>
 
-      {deleteEventModal && (
-        <EventDeleteModal
-          event={deleteEventModal.event}
-          account={deleteEventModal.account}
-          receipts={deleteEventModal.receipts}
-          close={() => setDeleteEventModal(null)}
-          onChoose={confirmDeleteEvent}
+      {googleImportOpen && (
+        <GoogleImportModal
+          close={() => setGoogleImportOpen(false)}
+          importEvents={importGoogleEvents}
         />
       )}
 
@@ -799,6 +779,92 @@ function Empty({ text }) {
     <div className="empty-state">
       <div><CalendarDays size={22} /></div>
       <p>{text}</p>
+    </div>
+  );
+}
+
+function GoogleImportModal({ close, importEvents }) {
+  const defaultStart = today();
+  const d = new Date(); d.setDate(d.getDate() + 180);
+  const defaultEnd = localISODate(d);
+  const [startDate, setStartDate] = useState(defaultStart);
+  const [endDate, setEndDate] = useState(defaultEnd);
+  const [items, setItems] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    if (endDate < startDate) { setError('A data final não pode ser anterior à inicial.'); return; }
+    setLoading(true); setError('');
+    try {
+      const result = await api('googleCalendarList', { startDate, endDate });
+      setItems(result || []);
+      setSelected(new Set((result || []).map(x => x.id)));
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && close()}>
+      <div className="modal" style={{maxWidth:760}}>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">GOOGLE AGENDA</p>
+            <h2>Importar da agenda “eventos”</h2>
+            <p className="hint">Os eventos particulares da agenda principal não entram nesta sincronização.</p>
+          </div>
+          <button className="icon-btn" onClick={close}><X /></button>
+        </div>
+
+        <div className="form-grid">
+          <label className="field">De<input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
+          <label className="field">Até<input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
+        </div>
+        <button className="secondary-btn" onClick={load} disabled={loading}>
+          <RefreshCw size={15} /> {loading ? 'Consultando...' : 'Buscar eventos'}
+        </button>
+
+        {error && <div className="alert error" style={{marginTop:12}}><AlertCircle size={16}/>{error}</div>}
+
+        {items.length > 0 && (
+          <div className="panel" style={{marginTop:16, maxHeight:360, overflow:'auto'}}>
+            <div className="panel-head">
+              <div><h2>Eventos encontrados</h2><p>{selected.size} selecionado(s) para importar</p></div>
+              <button className="text-btn" onClick={() => setSelected(selected.size === items.length ? new Set() : new Set(items.map(x => x.id)))}>
+                {selected.size === items.length ? 'Desmarcar todos' : 'Selecionar todos'}
+              </button>
+            </div>
+            {items.map(item => (
+              <label key={item.id} className="event-row" style={{cursor:'pointer'}}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(item.id)}
+                  onChange={() => setSelected(current => {
+                    const next = new Set(current); next.has(item.id) ? next.delete(item.id) : next.add(item.id); return next;
+                  })}
+                />
+                <div className="date-tile"><b>{item.start?.slice(8,10)}</b><small>{item.start?.slice(5,7)}</small></div>
+                <div className="event-info">
+                  <b>{item.title || 'Evento sem título'}</b>
+                  <span>{item.time || 'Dia inteiro'}{item.location ? ` · ${item.location}` : ''}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+
+        {!loading && items.length === 0 && (
+          <div className="empty-state" style={{marginTop:16}}><div><CalendarDays size={22}/></div><p>Nenhum evento novo encontrado no período.</p></div>
+        )}
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={close}>Cancelar</button>
+          <button type="button" className="primary-btn" disabled={!selected.size || loading} onClick={() => importEvents([...selected])}>
+            <CheckCircle2 size={16}/> Importar selecionados ({selected.size})
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1038,38 +1104,6 @@ function RecordModal({
   );
 }
 
-function EventDeleteModal({ event, account, receipts, close, onChoose }) {
-  const total = receipts.reduce((sum, r) => sum + Number(r.amount || 0), 0);
-  return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && close()}>
-    <div className="modal">
-      <div className="modal-head">
-        <div>
-          <p className="eyebrow">EXCLUSÃO DO EVENTO</p>
-          <h2>{event.title || 'Evento fotográfico'}</h2>
-          <small>{event.clientName || 'Cliente não informado'} · {formatDate(event.date)}</small>
-        </div>
-        <button type="button" className="icon-btn" onClick={close}><X /></button>
-      </div>
-      <div className="panel" style={{marginBottom:14}}>
-        <b>Este evento possui {receipts.length} recebimento{receipts.length === 1 ? '' : 's'} registrado{receipts.length === 1 ? '' : 's'}.</b>
-        <div style={{marginTop:7}}>Total recebido: <strong>{money(total)}</strong></div>
-        <small style={{display:'block',marginTop:7,color:'#7b8494'}}>Escolha como o sistema deve tratar o financeiro antes de excluir o evento.</small>
-      </div>
-      <div className="delete-choice-grid">
-        <button className="choice-btn danger-choice" onClick={() => onChoose('estornar')}>
-          <b>Estornar recebimentos</b>
-          <span>Exclui o evento, estorna os recebimentos e remove essas entradas do Caixa. O estorno fica registrado na Auditoria.</span>
-        </button>
-        <button className="choice-btn keep-choice" onClick={() => onChoose('manter')}>
-          <b>Excluir evento e manter recebimentos</b>
-          <span>Exclui o evento, mas mantém os valores já recebidos no Caixa e preserva o histórico financeiro.</span>
-        </button>
-      </div>
-      <div className="modal-actions"><button type="button" className="secondary-btn" onClick={close}>Cancelar</button></div>
-    </div>
-  </div>;
-}
-
 function PaymentModal({ account, receipts, type='receivable', close, save, remove }) {
   const [form, setForm] = useState({ date: today(), amount: '', method: 'Pix', notes: '' });
   const [error, setError] = useState('');
@@ -1102,178 +1136,75 @@ function PaymentModal({ account, receipts, type='receivable', close, save, remov
   </div>;
 }
 function Reports({ data, period, setPeriod }) {
-  const todayISO = today();
-  const [reportType, setReportType] = useState('agenda');
-  const [startDate, setStartDate] = useState(() => `${todayISO.slice(0, 7)}-01`);
-  const [endDate, setEndDate] = useState(() => todayISO);
-  const [clientFilter, setClientFilter] = useState('');
-  const [selectedDays, setSelectedDays] = useState([5, 6]);
-  const [copyNotice, setCopyNotice] = useState('');
+  const tx = (data.transactions || []).filter(x => (x.date || '').startsWith(period));
 
-  const weekdayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-  const shortWeekday = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-  const monthNames = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const income = tx
+    .filter(x => x.type === 'Entrada')
+    .reduce((sum, x) => sum + Number(x.amount || 0), 0);
 
-  const dateFromISO = value => {
-    const [y, m, d] = String(value || '').split('-').map(Number);
-    return y && m && d ? new Date(y, m - 1, d) : null;
-  };
-
-  const inRange = value => {
-    const iso = normalizeDateValue(value);
-    return !!iso && (!startDate || iso >= startDate) && (!endDate || iso <= endDate);
-  };
-
-  const receiptsByAccount = accountId => (data.receipts || []).filter(r => String(r.receivableId || '') === String(accountId) && !String(r.status || '').toLowerCase().includes('estorn'));
-  const paymentsByAccount = accountId => (data.payments || []).filter(r => String(r.payableId || '') === String(accountId) && !String(r.status || '').toLowerCase().includes('estorn'));
-  const receivedFor = account => receiptsByAccount(account.id).reduce((sum, r) => sum + Number(r.amount || 0), 0);
-  const paidFor = account => paymentsByAccount(account.id).reduce((sum, r) => sum + Number(r.amount || 0), 0);
-
-  const clients = [...new Set((data.clients || []).map(c => String(c.name || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
-
-  const receivables = (data.receivable || [])
-    .filter(x => inRange(x.dueDate))
-    .filter(x => !clientFilter || String(x.person || '') === clientFilter)
-    .sort((a,b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
-
-  const payables = (data.payable || [])
-    .filter(x => inRange(x.dueDate))
-    .sort((a,b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
-
-  const transactions = (data.transactions || [])
-    .filter(x => inRange(x.date))
-    .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')));
-
-  const events = (data.events || [])
-    .filter(x => inRange(x.date))
-    .filter(x => !String(x.status || '').toLowerCase().includes('cancel'))
-    .filter(x => !clientFilter || String(x.clientName || '') === clientFilter)
-    .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.time || '').localeCompare(String(b.time || '')));
-
-  const availabilityDates = [];
-  if (startDate && endDate && startDate <= endDate) {
-    let cursor = dateFromISO(startDate);
-    const end = dateFromISO(endDate);
-    while (cursor && end && cursor <= end) {
-      const iso = localISODate(cursor);
-      if (selectedDays.includes(cursor.getDay())) availabilityDates.push({ iso, day: cursor.getDay() });
-      cursor.setDate(cursor.getDate() + 1);
-    }
-  }
-  const bookedDates = new Set((data.events || [])
-    .filter(e => !String(e.status || '').toLowerCase().includes('cancel'))
-    .map(e => normalizeDateValue(e.date)).filter(Boolean));
-  const freeDates = availabilityDates.filter(x => !bookedDates.has(x.iso));
-
-  const toggleDay = day => setSelectedDays(days => days.includes(day) ? days.filter(x => x !== day) : [...days, day].sort((a,b) => a-b));
-
-  const reportTitles = {
-    agenda: ['Agenda', 'Eventos agendados no período'],
-    availability: ['Datas disponíveis', 'Sextas e sábados — ou outros dias selecionados — ainda livres'],
-    receivable: ['Contas a receber', 'Contas com vencimento no período'],
-    payable: ['Contas a pagar', 'Contas com vencimento no período'],
-    transactions: ['Caixa', 'Entradas e saídas registradas no período']
-  };
-
-  const copyAvailable = async () => {
-    if (!freeDates.length) { setCopyNotice('Não há datas disponíveis com os filtros selecionados.'); return; }
-    const lines = ['DATAS DISPONÍVEIS', `${formatDate(startDate)} a ${formatDate(endDate)}`, ''];
-    freeDates.forEach(item => {
-      const d = dateFromISO(item.iso);
-      lines.push(`• ${shortWeekday[item.day]} ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth()+1).padStart(2, '0')}/${d.getFullYear()}`);
-    });
-    lines.push('', 'Consulte a disponibilidade antes de confirmar.');
-    const text = lines.join('\n');
-    try { await navigator.clipboard.writeText(text); setCopyNotice('Lista copiada para o WhatsApp.'); }
-    catch { window.prompt('Copie a lista abaixo:', text); }
-  };
-
-  const printReport = () => window.print();
+  const expense = tx
+    .filter(x => x.type === 'Saída')
+    .reduce((sum, x) => sum + Number(x.amount || 0), 0);
 
   return (
-    <div className="reports-page">
-      <div className="report-print-header">
-        <div className="report-brand"><span className="report-logo"><Camera size={20}/></span><strong>FotoGestor</strong></div>
-        <div className="report-brand-sub">Relatório</div>
-      </div>
-
-      <div className="page-heading report-screen-heading">
+    <>
+      <div className="page-heading">
         <div>
-          <p className="eyebrow">RELATÓRIOS</p>
+          <p className="eyebrow">ANÁLISE DO NEGÓCIO</p>
           <h1>Relatórios</h1>
-          <p>Escolha o relatório e o período que deseja consultar ou imprimir.</p>
+          <p>Visão financeira e pendências por período.</p>
         </div>
-        <button className="secondary-btn" onClick={printReport}>Imprimir / PDF</button>
+        <input className="period-input" type="month" value={period} onChange={e => setPeriod(e.target.value)} />
       </div>
 
-      <div className="report-selector">
-        {[
-          ['agenda','Agenda',CalendarDays],
-          ['availability','Datas disponíveis',CalendarClock],
-          ['receivable','Contas a receber',ArrowDownToLine],
-          ['payable','Contas a pagar',ArrowUpFromLine],
-          ['transactions','Caixa',Wallet]
-        ].map(([id,label,Icon]) => (
-          <button key={id} className={reportType === id ? 'report-selector-btn active' : 'report-selector-btn'} onClick={() => { setReportType(id); setCopyNotice(''); }}>
-            <Icon size={16}/><span>{label}</span>
-          </button>
-        ))}
+      <div className="stats-grid">
+        <Stat label="Entradas no período" value={money(income)} icon={ArrowDownToLine} tone="green" foot={period} />
+        <Stat label="Saídas no período" value={money(expense)} icon={ArrowUpFromLine} tone="orange" foot={period} />
+        <Stat label="Resultado do período" value={money(income - expense)} icon={ChartNoAxesCombined} tone="purple" foot="Entradas menos saídas" />
+        <Stat label="Eventos cadastrados" value={data.events?.filter(e => (e.date || '').startsWith(period)).length || 0} icon={CalendarDays} tone="blue" foot="No mês selecionado" />
       </div>
 
-      <section className="report-sheet">
-        <header className="report-sheet-header">
-          <div>
-            <p className="eyebrow">{reportTitles[reportType][0].toUpperCase()}</p>
-            <h2>{reportTitles[reportType][0]}</h2>
-            <p>{reportTitles[reportType][1]}</p>
+      <div className="dashboard-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <div><h2>Contas a receber</h2><p>Saldo pendente por cliente</p></div>
           </div>
-          <div className="report-period-print">{startDate ? formatDate(startDate) : '—'} a {endDate ? formatDate(endDate) : '—'}</div>
-        </header>
-
-        <div className="report-filters">
-          <label className="field">De<input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
-          <label className="field">Até<input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
-          {(reportType === 'agenda' || reportType === 'availability' || reportType === 'receivable') && (
-            <label className="field">Cliente{reportType === 'availability' ? <select value={clientFilter} onChange={e => setClientFilter(e.target.value)}><option value="">Todos</option>{clients.map(name => <option key={name}>{name}</option>)}</select> : <select value={clientFilter} onChange={e => setClientFilter(e.target.value)}><option value="">Todos os clientes</option>{clients.map(name => <option key={name}>{name}</option>)}</select>}</label>
+          {(data.receivable || [])
+            .filter(x => Number(x.amount || 0) > Number(x.paid || 0))
+            .map(x => (
+              <div className="money-row" key={x.id}>
+                <span>{x.person} · {x.description}</span>
+                <b>{money(Number(x.amount) - Number(x.paid || 0))}</b>
+              </div>
+            ))}
+          {!data.receivable?.some(x => Number(x.amount || 0) > Number(x.paid || 0)) && (
+            <Empty text="Nenhuma conta pendente." />
           )}
-          {reportType === 'availability' && (
-            <div className="weekday-filter report-weekdays">
-              {weekdayNames.map((name, day) => <label key={name} className="weekday-check"><input type="checkbox" checked={selectedDays.includes(day)} onChange={() => toggleDay(day)} /> {name}</label>)}
-            </div>
-          )}
-        </div>
+        </section>
 
-        {reportType === 'availability' && (
-          <div className="report-inline-actions">
-            <button className="secondary-btn" onClick={copyAvailable}>Copiar datas para WhatsApp</button>
-            {copyNotice && <span>{copyNotice}</span>}
+        <section className="panel">
+          <div className="panel-head">
+            <div><h2>Contas a pagar</h2><p>Saldo pendente por fornecedor</p></div>
           </div>
-        )}
+          {(data.payable || [])
+            .filter(x => Number(x.amount || 0) > Number(x.paid || 0))
+            .map(x => (
+              <div className="money-row" key={x.id}>
+                <span>{x.person} · {x.description}</span>
+                <b>{money(Number(x.amount) - Number(x.paid || 0))}</b>
+              </div>
+            ))}
+          {!data.payable?.some(x => Number(x.amount || 0) > Number(x.paid || 0)) && (
+            <Empty text="Nenhuma conta pendente." />
+          )}
+        </section>
+      </div>
 
-        {startDate > endDate ? <div className="report-warning">A data inicial não pode ser posterior à data final.</div> : (
-          <>
-            {reportType === 'agenda' && <ReportTable columns={['Data','Dia','Horário','Evento','Cliente','Local','Valor','Situação']} rows={events.map(e => { const d=dateFromISO(e.date); return [formatDate(e.date), weekdayNames[d?.getDay() ?? 0], formatTime(e.time)||'—', e.title||e.type||'Evento fotográfico', e.clientName||'—', e.location||'—', money(e.value), e.status||'Agendado']; })} empty="Nenhum evento encontrado no período." />}
-            {reportType === 'receivable' && <ReportTable columns={['Vencimento','Cliente','Descrição','Valor','Recebido','Saldo','Situação']} rows={receivables.map(a => { const received=receivedFor(a); const balance=Math.max(0,Number(a.amount||0)-received); return [formatDate(a.dueDate),a.person||'—',a.description||'—',money(a.amount),money(received),money(balance),a.status|| (balance<=0?'Pago':'Pendente')]; })} empty="Nenhuma conta a receber no período." />}
-            {reportType === 'payable' && <ReportTable columns={['Vencimento','Fornecedor','Descrição','Valor','Pago','Saldo','Situação']} rows={payables.map(a => { const paid=paidFor(a); const balance=Math.max(0,Number(a.amount||0)-paid); return [formatDate(a.dueDate),a.person||'—',a.description||'—',money(a.amount),money(paid),money(balance),a.status|| (balance<=0?'Pago':'Pendente')]; })} empty="Nenhuma conta a pagar no período." />}
-            {reportType === 'transactions' && <ReportTable columns={['Data','Tipo','Descrição','Categoria','Pessoa','Forma','Valor']} rows={transactions.map(x => [formatDate(x.date),x.type||'—',x.description||'—',x.category||'—',x.person||'—',x.method||'—',money(x.amount)])} empty="Nenhuma movimentação no período." />}
-            {reportType === 'availability' && <ReportTable columns={['Data','Dia','Situação']} rows={availabilityDates.map(x => [formatDate(x.iso),weekdayNames[x.day],bookedDates.has(x.iso)?'Agendada':'Disponível']).filter((_,i) => true).filter(row => row[2] === 'Disponível')} empty="Nenhuma data disponível com os filtros selecionados." />}
-          </>
-        )}
-
-        {reportType === 'availability' && startDate <= endDate && <p className="report-note">A disponibilidade é calculada considerando eventos ativos da Agenda. Eventos cancelados não bloqueiam a data.</p>}
-      </section>
-    </div>
+      <button className="secondary-btn" onClick={() => window.print()}>
+        Imprimir / salvar em PDF
+      </button>
+    </>
   );
-}
-
-function ReportTable({ columns, rows, empty }) {
-  return <div className="report-list-wrap">
-    <table className="report-list-table">
-      <thead><tr>{columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
-      <tbody>{rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
-    </table>
-    {!rows.length && <Empty text={empty} />}
-  </div>;
 }
 
 function SettingsPage({ data, onSave }) {

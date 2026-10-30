@@ -9,8 +9,7 @@ const SHEETS = {
   Recebimentos: ['id','receivableId','eventId','date','amount','method','notes','cashTransactionId','createdAt','updatedAt'],
   ContasPagar: ['id','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
   Pagamentos: ['id','payableId','date','amount','method','notes','cashTransactionId','createdAt','updatedAt'],
-  Configuracoes: ['key','value'],
-  Auditoria: ['id','date','action','entity','entityId','description','details','createdAt']
+  Configuracoes: ['key','value']
 };
 function doGet() { return json_({ok:true,message:'FotoGestor API ativa. Use POST para operações.'}); }
 function doPost(e) {
@@ -19,7 +18,8 @@ function doPost(e) {
     const action = String(body.action || '');
     if (action === 'read') return json_({ok:true,data:readAll_()});
     if (action === 'settings') { saveSettings_(body.data || {}); return json_({ok:true,data:true}); }
-    if (action === 'deleteEvent') { return json_({ok:true,data:deleteEventWithFinancialChoice_(body.data || {})}); }
+    if (action === 'googleCalendarList') return json_({ok:true,data:listGoogleCalendarEvents_(body.data || {})});
+    if (action === 'googleCalendarImport') return json_({ok:true,data:importGoogleCalendarEvents_(body.data || {})});
     if (['create','update','delete'].includes(action)) {
       const entity = String(body.data && body.data.entity || '');
       const item = body.data && body.data.item || {};
@@ -89,20 +89,15 @@ function receiptsTotalFor_(receivableId) {
   const sh=ss_().getSheetByName('Recebimentos'); if(!sh || sh.getLastRow()<2) return 0;
   const vals=sh.getDataRange().getValues(), headers=vals[0].map(String), ri=headers.indexOf('receivableId'), ai=headers.indexOf('amount');
   if(ri<0||ai<0) return 0;
-  const si=headers.indexOf('status');
-  return vals.slice(1).reduce((s,r)=>{
-    if(String(r[ri]||'')!==String(receivableId)) return s;
-    if(si>=0 && String(r[si]||'').toLowerCase()==='estornado') return s;
-    return s+Number(r[ai]||0);
-  },0);
+  return vals.slice(1).reduce((s,r)=>s+(String(r[ri]||'')===String(receivableId)?Number(r[ai]||0):0),0);
 }
 
 function todayISO_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'); }
 
 function readAll_() {
   ensureStructure_();
-  const ss=ss_(),out={clients:[],suppliers:[],services:[],events:[],transactions:[],receivable:[],payable:[],receipts:[],settings:{},audits:[]};
-  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable',Recebimentos:'receipts',Pagamentos:'payments',Auditoria:'audits'};
+  const ss=ss_(),out={clients:[],suppliers:[],services:[],events:[],transactions:[],receivable:[],payable:[],receipts:[],settings:{}};
+  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable',Recebimentos:'receipts',Pagamentos:'payments'};
   Object.keys(map).forEach(name=>{
     const sh=ss.getSheetByName(name); if(!sh) return;
     const range=sh.getDataRange();
@@ -229,112 +224,11 @@ function syncReceivableFromReceipts_(receivableId) {
     const duec=headers.indexOf('dueDate'); const due=duec>=0?normalizeDate_(vals[i][duec]):'';
     sh.getRange(i+1,statusc+1).setValue(paid>=total?'Pago':paid>0?'Parcial':(due && due<todayISO_()?'Vencida':'Pendente'));
     if(upd>=0)sh.getRange(i+1,upd+1).setValue(new Date());
+    const eventId=headers.indexOf('eventId')>=0 ? String(vals[i][headers.indexOf('eventId')]||'') : '';
+    if(eventId) syncGoogleCalendarColorForEventId_(eventId);
     return;
   }
 }
-function audit_(action, entity, entityId, description, details){
-  ensureStructure_();
-  const sh=ss_().getSheetByName('Auditoria');
-  sh.appendRow([Utilities.getUuid(), new Date(), action, entity, entityId || '', description || '', details || '', new Date()]);
-}
-function findAccountsByEvent_(eventId){
-  const sh=ss_().getSheetByName('ContasReceber'); if(!sh||sh.getLastRow()<2)return [];
-  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), ei=h.indexOf('eventId');
-  if(ei<0)return [];
-  return vals.slice(1)
-    .map(r=>h.reduce((o,k,j)=>(o[k]=r[j],o),{}))
-    .filter(o=>String(o.eventId||'')===String(eventId));
-}
-function findAccountByEvent_(eventId){
-  return findAccountsByEvent_(eventId)[0] || null;
-}
-function activeReceiptsFor_(receivableId){
-  const sh=ss_().getSheetByName('Recebimentos'); if(!sh||sh.getLastRow()<2)return [];
-  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), ri=h.indexOf('receivableId'), si=h.indexOf('status');
-  if(ri<0)return [];
-  return vals.slice(1).map(r=>h.reduce((o,k,j)=>(o[k]=r[j],o),{})).filter(r=>String(r.receivableId||'')===String(receivableId) && String(r.status||'').toLowerCase()!=='estornado');
-}
-function setReceiptStatus_(receiptId,status,noteSuffix){
-  const sh=ss_().getSheetByName('Recebimentos'); if(!sh)return;
-  const row=findRowById_('Recebimentos',receiptId); if(row<0)return;
-  const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
-  const sc=h.indexOf('status'), nc=h.indexOf('notes'), uc=h.indexOf('updatedAt');
-  if(sc>=0)sh.getRange(row,sc+1).setValue(status);
-  if(noteSuffix && nc>=0){ const current=String(sh.getRange(row,nc+1).getValue()||''); sh.getRange(row,nc+1).setValue((current?current+' · ':'')+noteSuffix); }
-  if(uc>=0)sh.getRange(row,uc+1).setValue(new Date());
-}
-function deleteReceivableById_(receivableId){
-  if(!receivableId)return;
-  const sh=ss_().getSheetByName('ContasReceber'); if(!sh||sh.getLastRow()<2)return;
-  const vals=sh.getDataRange().getValues();
-  for(let i=1;i<vals.length;i++) if(String(vals[i][0]||'')===String(receivableId)){ sh.deleteRow(i+1); return; }
-}
-function detachReceivableFromEvent_(receivableId, paid, total){
-  if(!receivableId)return;
-  const sh=ss_().getSheetByName('ContasReceber'); if(!sh)return;
-  const row=findRowById_('ContasReceber',receivableId); if(row<0)return;
-  const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
-  const ec=h.indexOf('eventId'), sc=h.indexOf('status'), uc=h.indexOf('updatedAt'), pc=h.indexOf('paid');
-  if(ec>=0)sh.getRange(row,ec+1).setValue('');
-  if(pc>=0)sh.getRange(row,pc+1).setValue(paid);
-  if(sc>=0)sh.getRange(row,sc+1).setValue(paid>=total-0.001?'Pago':'Encerrada');
-  if(uc>=0)sh.getRange(row,uc+1).setValue(new Date());
-}
-function clearReceiptEventLink_(receivableId){
-  const sh=ss_().getSheetByName('Recebimentos'); if(!sh||sh.getLastRow()<2)return;
-  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), ri=h.indexOf('receivableId'), ei=h.indexOf('eventId');
-  if(ri<0||ei<0)return;
-  for(let i=1;i<vals.length;i++) if(String(vals[i][ri]||'')===String(receivableId)) sh.getRange(i+1,ei+1).setValue('');
-}
-function deleteEventWithFinancialChoice_(data){
-  const eventId=String(data.eventId||'');
-  const mode=String(data.mode||'').toLowerCase();
-  if(!eventId)throw new Error('Identificador do evento ausente.');
-  if(!['estornar','manter','excluir'].includes(mode))throw new Error('Opção de exclusão inválida.');
-  const event=lookupAccount_('Eventos',eventId); if(!event)throw new Error('Evento não encontrado.');
-
-  // Um evento deveria ter apenas uma conta a receber, mas versões anteriores
-  // podem ter deixado duplicidades. A exclusão financeira trata TODAS as
-  // contas vinculadas ao evento para nunca deixar uma cobrança órfã.
-  const accounts=findAccountsByEvent_(eventId);
-  const receivableIds=accounts.map(a=>String(a.id||'')).filter(Boolean);
-  const receipts=receivableIds.flatMap(id=>activeReceiptsFor_(id));
-  const totalReceived=receipts.reduce((s,r)=>s+Number(r.amount||0),0);
-
-  if(mode==='excluir' && receipts.length){
-    throw new Error('Este evento possui recebimentos. Escolha estornar ou manter os recebimentos.');
-  }
-
-  if(mode==='estornar'){
-    receipts.forEach(r=>{
-      setReceiptStatus_(r.id,'Estornado','Estorno por exclusão do evento');
-      deleteCashBySource_('receivable',r.id);
-    });
-    receivableIds.forEach(deleteReceivableById_);
-    audit_('Exclusão com estorno','Evento',eventId,'Evento excluído e recebimentos estornados',`Evento: ${event.title||'Evento'} · Contas a receber removidas: ${accounts.length} · Recebimentos estornados: ${receipts.length} · Total: R$ ${totalReceived.toFixed(2).replace('.',',')}`);
-  } else if(mode==='manter'){
-    receivableIds.forEach(id=>clearReceiptEventLink_(id));
-    accounts.forEach(account=>{
-      const paid=receipts.filter(r=>String(r.receivableId||'')===String(account.id||'')).reduce((s,r)=>s+Number(r.amount||0),0);
-      detachReceivableFromEvent_(String(account.id||''),paid,Number(account.amount||event.value||0));
-    });
-    audit_('Exclusão com manutenção financeira','Evento',eventId,'Evento excluído e recebimentos mantidos',`Evento: ${event.title||'Evento'} · Contas desvinculadas: ${accounts.length} · Recebimentos mantidos: ${receipts.length} · Total: R$ ${totalReceived.toFixed(2).replace('.',',')}`);
-  } else {
-    receivableIds.forEach(deleteReceivableById_);
-    audit_('Exclusão','Evento',eventId,'Evento excluído sem recebimentos',`Evento: ${event.title||'Evento'} · Contas a receber removidas: ${accounts.length}`);
-  }
-
-  const row=findRowById_('Eventos',eventId);
-  if(row>0){
-    const sh=ss_().getSheetByName('Eventos'); const vals=sh.getRange(row,1,1,sh.getLastColumn()).getValues()[0];
-    const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
-    const googleEventId=h.indexOf('googleEventId')>=0?vals[h.indexOf('googleEventId')]:'';
-    const googleCalendarId=h.indexOf('googleCalendarId')>=0?vals[h.indexOf('googleCalendarId')]:'';
-    deleteGoogleCalendarEvent_(googleEventId,googleCalendarId); sh.deleteRow(row);
-  }
-  return {eventId,eventTitle:event.title||'Evento',mode,accountsCount:accounts.length,receiptsCount:receipts.length,totalReceived};
-}
-
 function findRowById_(sheetName,id){ const sh=ss_().getSheetByName(sheetName); if(!sh||sh.getLastRow()<2)return -1; const vals=sh.getDataRange().getValues(); for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)) return i+1; return -1; }
 function deleteRow_(sheetName,id) {
   if(!id)throw new Error('Identificador ausente.');
@@ -353,22 +247,38 @@ function deleteRow_(sheetName,id) {
 }
 
 function authorizeGoogleCalendar(){
-  // Execute esta função uma vez no editor do Apps Script para conceder
-  // explicitamente a permissão de acesso ao Google Calendar.
-  const cal = CalendarApp.getDefaultCalendar();
-  if(!cal) throw new Error('Não foi possível acessar o Google Agenda padrão.');
-  PropertiesService.getScriptProperties().setProperty('GOOGLE_CALENDAR_ID', cal.getId());
+  const props=PropertiesService.getScriptProperties();
+  const calendars=CalendarApp.getOwnedCalendarsByName('eventos');
+  const cal=calendars && calendars.length ? calendars[0] : CalendarApp.getDefaultCalendar();
+  if(!cal) throw new Error('Não foi possível acessar o Google Agenda.');
+  props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
+  props.setProperty('GOOGLE_CALENDAR_NAME', cal.getName());
   return 'Google Agenda autorizado: ' + cal.getName();
 }
 
 function googleCalendar_(){
   const props=PropertiesService.getScriptProperties();
+  const named=CalendarApp.getOwnedCalendarsByName('eventos');
+  if(named && named.length){
+    props.setProperty('GOOGLE_CALENDAR_ID', named[0].getId());
+    props.setProperty('GOOGLE_CALENDAR_NAME', named[0].getName());
+    return named[0];
+  }
   const id=props.getProperty('GOOGLE_CALENDAR_ID');
-  if(id) return CalendarApp.getCalendarById(id);
+  if(id){ const existing=CalendarApp.getCalendarById(id); if(existing) return existing; }
   const cal=CalendarApp.getDefaultCalendar();
-  if(!cal) throw new Error('Não foi possível acessar o Google Agenda padrão. Autorize o acesso ao Google Calendar no Apps Script.');
+  if(!cal) throw new Error('Não foi possível acessar o Google Agenda. Autorize o acesso ao Google Calendar no Apps Script.');
   props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
+  props.setProperty('GOOGLE_CALENDAR_NAME', cal.getName());
   return cal;
+}
+
+function calendarForEvent_(event){
+  if(event && event.googleCalendarId){
+    const linked=CalendarApp.getCalendarById(String(event.googleCalendarId));
+    if(linked) return linked;
+  }
+  return googleCalendar_();
 }
 
 function eventDateTime_(dateStr,timeStr){
@@ -401,7 +311,7 @@ function saveGoogleEventIds_(eventId, googleEventId, calendarId){
 
 function syncGoogleCalendarEvent_(event, mode){
   if(!event || !event.id || !event.date) return;
-  const cal=googleCalendar_();
+  const cal=calendarForEvent_(event);
   const calendarId=cal.getId();
   let googleEventId=String(event.googleEventId||'');
   let gEvent=null;
@@ -422,6 +332,7 @@ function syncGoogleCalendarEvent_(event, mode){
       gEvent=cal.createAllDayEvent(title,day,{description:description,location:location});
     }
     googleEventId=gEvent.getId();
+    setGoogleEventColor_(gEvent,event);
     saveGoogleEventIds_(event.id,googleEventId,calendarId);
     return;
   }
@@ -440,6 +351,7 @@ function syncGoogleCalendarEvent_(event, mode){
     }
     gEvent.setLocation(location);
     gEvent.setDescription(description);
+    setGoogleEventColor_(gEvent,event);
     saveGoogleEventIds_(event.id,gEvent.getId(),calendarId);
   } catch(e){
     // Alguns eventos do Google não permitem a conversão de tipo; recria de forma segura.
@@ -451,8 +363,85 @@ function syncGoogleCalendarEvent_(event, mode){
     } else {
       recreated=cal.createAllDayEvent(title,eventDateTime_(event.date,''),{description:description,location:location});
     }
+    setGoogleEventColor_(recreated,event);
     saveGoogleEventIds_(event.id,recreated.getId(),calendarId);
   }
+}
+
+function syncGoogleCalendarColorForEventId_(eventId){
+  const row=findRowById_('Eventos',eventId); if(row<0) return;
+  const sh=ss_().getSheetByName('Eventos'); const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String); const r=sh.getRange(row,1,1,h.length).getValues()[0];
+  const event={}; h.forEach((k,i)=>event[k]=r[i]);
+  if(!event.googleEventId) return;
+  try{
+    const cal=event.googleCalendarId ? CalendarApp.getCalendarById(String(event.googleCalendarId)) : googleCalendar_();
+    const ev=cal && cal.getEventById(String(event.googleEventId));
+    if(ev) setGoogleEventColor_(ev,event);
+  }catch(e){ Logger.log('Não foi possível atualizar a cor do evento: '+e); }
+}
+
+function googleEventColor_(event){
+  if(!event || String(event.status||'').toLowerCase()==='cancelado') return CalendarApp.EventColor.GRAY;
+  const value=Number(event.value||0);
+  if(value<=0) return CalendarApp.EventColor.GRAY;
+  const sh=ss_().getSheetByName('ContasReceber');
+  if(!sh || sh.getLastRow()<2) return CalendarApp.EventColor.RED;
+  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), ec=h.indexOf('eventId'), sc=h.indexOf('status');
+  if(ec<0 || sc<0) return CalendarApp.EventColor.RED;
+  for(let i=1;i<vals.length;i++) if(String(vals[i][ec]||'')===String(event.id||'')){
+    const status=String(vals[i][sc]||'Pendente').toLowerCase();
+    if(status==='pago') return CalendarApp.EventColor.GREEN;
+    if(status==='parcial') return CalendarApp.EventColor.YELLOW;
+    return CalendarApp.EventColor.RED;
+  }
+  return CalendarApp.EventColor.GRAY;
+}
+
+function setGoogleEventColor_(gEvent,event){
+  try { gEvent.setColor(googleEventColor_(event)); } catch(e) { Logger.log('Não foi possível definir a cor do evento: '+e); }
+}
+
+function listGoogleCalendarEvents_(data){
+  const cal=googleCalendar_();
+  const start=eventDateTime_(data.startDate || todayISO_(),'');
+  const end=eventDateTime_(data.endDate || todayISO_(),'');
+  end.setDate(end.getDate()+1);
+  const existingIds={};
+  const sh=ss_().getSheetByName('Eventos');
+  if(sh && sh.getLastRow()>1){
+    const vals=sh.getDataRange().getValues(), h=vals[0].map(String), c=h.indexOf('googleEventId');
+    if(c>=0) for(let i=1;i<vals.length;i++) if(vals[i][c]) existingIds[String(vals[i][c])]=true;
+  }
+  return cal.getEvents(start,end).map(ev=>({
+    id:ev.getId(), title:ev.getTitle(), start:Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd'),
+    time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'),
+    end:Utilities.formatDate(ev.getEndTime(),cal.getTimeZone(),'yyyy-MM-dd HH:mm'), allDay:ev.isAllDayEvent(),
+    location:ev.getLocation()||'', description:ev.getDescription()||'', color:String(ev.getColor()||''),
+    imported:!!existingIds[String(ev.getId())]
+  })).filter(x=>!x.imported).sort((a,b)=>(a.start+' '+a.time).localeCompare(b.start+' '+b.time));
+}
+
+function importGoogleCalendarEvents_(data){
+  const ids=(data.ids||[]).map(String);
+  if(!ids.length) return {imported:0,skipped:0};
+  const cal=googleCalendar_();
+  const sh=ss_().getSheetByName('Eventos');
+  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), gidc=h.indexOf('googleEventId');
+  const existing={};
+  if(gidc>=0) for(let i=1;i<vals.length;i++) if(vals[i][gidc]) existing[String(vals[i][gidc])]=true;
+  let imported=0,skipped=0;
+  ids.forEach(id=>{
+    if(existing[id]){ skipped++; return; }
+    let ev=null; try{ ev=cal.getEventById(id); }catch(e){ ev=null; }
+    if(!ev){ skipped++; return; }
+    const item={
+      id:Utilities.getUuid(), title:ev.getTitle()||'Evento importado', clientName:'', date:Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd'),
+      time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'), type:'', location:ev.getLocation()||'', value:0,
+      status:'Confirmado', notes:ev.getDescription()||'', googleEventId:ev.getId(), googleCalendarId:cal.getId(), createdAt:new Date(), updatedAt:new Date()
+    };
+    saveRow_('Eventos',item,false); imported++;
+  });
+  return {imported:imported,skipped:skipped};
 }
 
 function deleteGoogleCalendarEvent_(googleEventId,calendarId){
