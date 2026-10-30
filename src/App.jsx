@@ -442,9 +442,16 @@ function App() {
   const title = sections.find(s => s[0] === active)?.[1] || 'Painel';
 
   const currentItems = entities[active]
-    ? (data[active] || []).filter(x =>
-        JSON.stringify(x).toLowerCase().includes(search.toLowerCase())
-      )
+    ? (data[active] || [])
+        .filter(x => JSON.stringify(x).toLowerCase().includes(search.toLowerCase()))
+        .sort((a, b) => {
+          if (active !== 'events') return 0;
+          const ad = normalizeDateValue(a.date || '');
+          const bd = normalizeDateValue(b.date || '');
+          const byDate = ad.localeCompare(bd);
+          if (byDate !== 0) return byDate;
+          return String(a.time || '').localeCompare(String(b.time || ''));
+        })
     : [];
 
   return (
@@ -1298,18 +1305,37 @@ function ReportTable({ headers, rows, empty }) {
 }
 
 function AvailableDatesReport({ events, from, to }) {
-  const occupied = new Set(events.filter(e=>inRange(e.date,from,to)).map(e=>normalizeDateValue(e.date)));
+  const occupied = new Set();
+
+  // Considera todo o intervalo de um evento, inclusive eventos de vários dias.
+  events.forEach(event => {
+    const start = normalizeDateValue(event.date || '');
+    const finish = normalizeDateValue(event.endDate || event.date || '');
+    if (!start) return;
+
+    let cursor = new Date(`${start}T12:00:00`);
+    const end = new Date(`${finish >= start ? finish : start}T12:00:00`);
+    while (cursor <= end) {
+      const iso = localISODate(cursor);
+      if (inRange(iso, from, to)) occupied.add(iso);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  });
+
   const dates=[];
   if(from && to && from <= to) {
     let d=new Date(`${from}T12:00:00`);
     const end=new Date(`${to}T12:00:00`);
     while(d<=end){
       const iso=localISODate(d);
-      if([5,6].includes(d.getDay())) dates.push({iso,weekday:d.getDay()===5?'Sexta-feira':'Sábado',available:!occupied.has(iso)});
+      // O relatório mostra somente datas realmente disponíveis.
+      if([5,6].includes(d.getDay()) && !occupied.has(iso)) {
+        dates.push({iso,weekday:d.getDay()===5?'Sexta-feira':'Sábado'});
+      }
       d.setDate(d.getDate()+1);
     }
   }
-  return <ReportTable headers={['Data','Dia','Situação']} rows={dates.map(x=>[formatDate(x.iso),x.weekday,x.available?'DISPONÍVEL':'OCUPADO'])} empty="Nenhuma sexta-feira ou sábado no período." />;
+  return <ReportTable headers={['Data','Dia']} rows={dates.map(x=>[formatDate(x.iso),x.weekday])} empty="Nenhuma sexta-feira ou sábado disponível no período." />;
 }
 
 function inRange(value, from, to) {
