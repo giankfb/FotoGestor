@@ -110,7 +110,7 @@ function readAll_() {
       headers.forEach((h,i)=>{
         // Para datas/horários, use o valor exibido na planilha. Isso evita
         // qualquer deslocamento de fuso causado por objetos Date do Sheets.
-        const raw=(h==='date'||h==='dueDate'||h==='time') ? display[ri+1][i] : r[i];
+        const raw=(h==='date'||h==='dueDate'||h==='time'||h==='endDate'||h==='endTime') ? display[ri+1][i] : r[i];
         o[h]=serialize_(raw, h);
       });
       return o;
@@ -140,8 +140,8 @@ function serialize_(v, header) {
     if (header === 'time') return Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm');
     return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   }
-  if (header === 'date' || header === 'dueDate') return normalizeDate_(v);
-  if (header === 'time') return normalizeTime_(v);
+  if (header === 'date' || header === 'dueDate' || header === 'endDate') return normalizeDate_(v);
+  if (header === 'time' || header === 'endTime') return normalizeTime_(v);
   return v;
 }
 
