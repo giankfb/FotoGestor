@@ -1102,31 +1102,15 @@ function PaymentModal({ account, receipts, type='receivable', close, save, remov
   </div>;
 }
 function Reports({ data, period, setPeriod }) {
-  const tx = (data.transactions || []).filter(x => (x.date || '').startsWith(period));
-
-  const income = tx
-    .filter(x => x.type === 'Entrada')
-    .reduce((sum, x) => sum + Number(x.amount || 0), 0);
-
-  const expense = tx
-    .filter(x => x.type === 'Saída')
-    .reduce((sum, x) => sum + Number(x.amount || 0), 0);
-
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-  });
-  const [endDate, setEndDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() + 5, 0);
-    return localISODate(d);
-  });
-  const [selectedDays, setSelectedDays] = useState([5, 6]);
+  const todayISO = today();
+  const [reportType, setReportType] = useState('agenda');
+  const [startDate, setStartDate] = useState(() => `${todayISO.slice(0, 7)}-01`);
+  const [endDate, setEndDate] = useState(() => todayISO);
   const [clientFilter, setClientFilter] = useState('');
-  const [reportMode, setReportMode] = useState('availability');
+  const [selectedDays, setSelectedDays] = useState([5, 6]);
   const [copyNotice, setCopyNotice] = useState('');
 
-  const weekdayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const weekdayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
   const shortWeekday = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const monthNames = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
 
@@ -1135,197 +1119,161 @@ function Reports({ data, period, setPeriod }) {
     return y && m && d ? new Date(y, m - 1, d) : null;
   };
 
-  const availableDates = [];
+  const inRange = value => {
+    const iso = normalizeDateValue(value);
+    return !!iso && (!startDate || iso >= startDate) && (!endDate || iso <= endDate);
+  };
+
+  const receiptsByAccount = accountId => (data.receipts || []).filter(r => String(r.receivableId || '') === String(accountId) && !String(r.status || '').toLowerCase().includes('estorn'));
+  const paymentsByAccount = accountId => (data.payments || []).filter(r => String(r.payableId || '') === String(accountId) && !String(r.status || '').toLowerCase().includes('estorn'));
+  const receivedFor = account => receiptsByAccount(account.id).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const paidFor = account => paymentsByAccount(account.id).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+
+  const clients = [...new Set((data.clients || []).map(c => String(c.name || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
+
+  const receivables = (data.receivable || [])
+    .filter(x => inRange(x.dueDate))
+    .filter(x => !clientFilter || String(x.person || '') === clientFilter)
+    .sort((a,b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+
+  const payables = (data.payable || [])
+    .filter(x => inRange(x.dueDate))
+    .sort((a,b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+
+  const transactions = (data.transactions || [])
+    .filter(x => inRange(x.date))
+    .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')));
+
+  const events = (data.events || [])
+    .filter(x => inRange(x.date))
+    .filter(x => !String(x.status || '').toLowerCase().includes('cancel'))
+    .filter(x => !clientFilter || String(x.clientName || '') === clientFilter)
+    .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.time || '').localeCompare(String(b.time || '')));
+
+  const availabilityDates = [];
   if (startDate && endDate && startDate <= endDate) {
     let cursor = dateFromISO(startDate);
     const end = dateFromISO(endDate);
     while (cursor && end && cursor <= end) {
       const iso = localISODate(cursor);
-      const day = cursor.getDay();
-      if (selectedDays.includes(day)) availableDates.push({ iso, day });
+      if (selectedDays.includes(cursor.getDay())) availabilityDates.push({ iso, day: cursor.getDay() });
       cursor.setDate(cursor.getDate() + 1);
     }
   }
+  const bookedDates = new Set((data.events || [])
+    .filter(e => !String(e.status || '').toLowerCase().includes('cancel'))
+    .map(e => normalizeDateValue(e.date)).filter(Boolean));
+  const freeDates = availabilityDates.filter(x => !bookedDates.has(x.iso));
 
-  const activeEvents = (data.events || []).filter(event => {
-    const status = String(event.status || '').toLowerCase();
-    return !status.includes('cancel');
-  });
+  const toggleDay = day => setSelectedDays(days => days.includes(day) ? days.filter(x => x !== day) : [...days, day].sort((a,b) => a-b));
 
-  const bookedDates = new Set(activeEvents.map(event => normalizeDateValue(event.date)).filter(Boolean));
-  const freeDates = availableDates.filter(d => !bookedDates.has(d.iso));
-  const bookedSelectedDates = availableDates.filter(d => bookedDates.has(d.iso));
-
-  const clientNames = [...new Set((data.clients || []).map(c => String(c.name || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
-
-  const agendaEvents = activeEvents
-    .filter(event => event.date >= startDate && event.date <= endDate)
-    .filter(event => !clientFilter || String(event.clientName || '').trim() === clientFilter)
-    .sort((a,b) => String(a.date).localeCompare(String(b.date)) || String(a.time || '').localeCompare(String(b.time || '')));
-
-  const toggleDay = day => {
-    setSelectedDays(days => days.includes(day) ? days.filter(x => x !== day) : [...days, day].sort((a,b) => a-b));
-  };
-
-  const groupedFreeDates = freeDates.reduce((groups, item) => {
-    const key = item.iso.slice(0, 7);
-    (groups[key] ||= []).push(item);
-    return groups;
-  }, {});
-
-  const formatLongDate = iso => {
-    const d = dateFromISO(iso);
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  const reportTitles = {
+    agenda: ['Agenda', 'Eventos agendados no período'],
+    availability: ['Datas disponíveis', 'Sextas e sábados — ou outros dias selecionados — ainda livres'],
+    receivable: ['Contas a receber', 'Contas com vencimento no período'],
+    payable: ['Contas a pagar', 'Contas com vencimento no período'],
+    transactions: ['Caixa', 'Entradas e saídas registradas no período']
   };
 
   const copyAvailable = async () => {
-    if (!freeDates.length) {
-      setCopyNotice('Não há datas disponíveis com os filtros selecionados.');
-      return;
-    }
-    const lines = ['DATAS DISPONÍVEIS PARA EVENTO', `${formatLongDate(startDate)} a ${formatLongDate(endDate)}`, ''];
-    Object.entries(groupedFreeDates).forEach(([key, dates]) => {
-      const [y, m] = key.split('-').map(Number);
-      lines.push(monthNames[m - 1].charAt(0).toUpperCase() + monthNames[m - 1].slice(1));
-      dates.forEach(item => {
-        const d = dateFromISO(item.iso);
-        lines.push(`• ${shortWeekday[item.day]} ${String(d.getDate()).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`);
-      });
-      lines.push('');
+    if (!freeDates.length) { setCopyNotice('Não há datas disponíveis com os filtros selecionados.'); return; }
+    const lines = ['DATAS DISPONÍVEIS', `${formatDate(startDate)} a ${formatDate(endDate)}`, ''];
+    freeDates.forEach(item => {
+      const d = dateFromISO(item.iso);
+      lines.push(`• ${shortWeekday[item.day]} ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth()+1).padStart(2, '0')}/${d.getFullYear()}`);
     });
-    lines.push('Consulte a disponibilidade antes de confirmar, pois a agenda pode sofrer alterações.');
+    lines.push('', 'Consulte a disponibilidade antes de confirmar.');
     const text = lines.join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyNotice('Lista copiada. Agora é só colar no WhatsApp.');
-    } catch {
-      window.prompt('Copie a lista abaixo:', text);
-    }
+    try { await navigator.clipboard.writeText(text); setCopyNotice('Lista copiada para o WhatsApp.'); }
+    catch { window.prompt('Copie a lista abaixo:', text); }
   };
 
+  const printReport = () => window.print();
+
   return (
-    <>
-      <div className="page-heading">
+    <div className="reports-page">
+      <div className="report-print-header">
+        <div className="report-brand"><span className="report-logo"><Camera size={20}/></span><strong>FotoGestor</strong></div>
+        <div className="report-brand-sub">Relatório</div>
+      </div>
+
+      <div className="page-heading report-screen-heading">
         <div>
-          <p className="eyebrow">ANÁLISE DO NEGÓCIO</p>
+          <p className="eyebrow">RELATÓRIOS</p>
           <h1>Relatórios</h1>
-          <p>Financeiro, agenda e datas livres para apresentar aos clientes.</p>
+          <p>Escolha o relatório e o período que deseja consultar ou imprimir.</p>
         </div>
-        <input className="period-input" type="month" value={period} onChange={e => setPeriod(e.target.value)} />
+        <button className="secondary-btn" onClick={printReport}>Imprimir / PDF</button>
       </div>
 
-      <div className="stats-grid">
-        <Stat label="Entradas no período" value={money(income)} icon={ArrowDownToLine} tone="green" foot={period} />
-        <Stat label="Saídas no período" value={money(expense)} icon={ArrowUpFromLine} tone="orange" foot={period} />
-        <Stat label="Resultado do período" value={money(income - expense)} icon={ChartNoAxesCombined} tone="purple" foot="Entradas menos saídas" />
-        <Stat label="Eventos cadastrados" value={data.events?.filter(e => (e.date || '').startsWith(period)).length || 0} icon={CalendarDays} tone="blue" foot="No mês selecionado" />
+      <div className="report-selector">
+        {[
+          ['agenda','Agenda',CalendarDays],
+          ['availability','Datas disponíveis',CalendarClock],
+          ['receivable','Contas a receber',ArrowDownToLine],
+          ['payable','Contas a pagar',ArrowUpFromLine],
+          ['transactions','Caixa',Wallet]
+        ].map(([id,label,Icon]) => (
+          <button key={id} className={reportType === id ? 'report-selector-btn active' : 'report-selector-btn'} onClick={() => { setReportType(id); setCopyNotice(''); }}>
+            <Icon size={16}/><span>{label}</span>
+          </button>
+        ))}
       </div>
 
-      <section className="panel availability-panel">
-        <div className="panel-head">
-          <div><h2>Agenda e disponibilidade</h2><p>Encontre rapidamente as sextas e sábados livres para oferecer aos clientes.</p></div>
-          <CalendarDays size={20} />
-        </div>
+      <section className="report-sheet">
+        <header className="report-sheet-header">
+          <div>
+            <p className="eyebrow">{reportTitles[reportType][0].toUpperCase()}</p>
+            <h2>{reportTitles[reportType][0]}</h2>
+            <p>{reportTitles[reportType][1]}</p>
+          </div>
+          <div className="report-period-print">{startDate ? formatDate(startDate) : '—'} a {endDate ? formatDate(endDate) : '—'}</div>
+        </header>
 
-        <div className="report-tabs">
-          <button className={reportMode === 'availability' ? 'report-tab active' : 'report-tab'} onClick={() => setReportMode('availability')}>Datas disponíveis</button>
-          <button className={reportMode === 'client' ? 'report-tab active' : 'report-tab'} onClick={() => setReportMode('client')}>Agenda por cliente</button>
-        </div>
-
-        <div className="availability-filters">
+        <div className="report-filters">
           <label className="field">De<input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
           <label className="field">Até<input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
-          <label className="field">Cliente (opcional)<select value={clientFilter} onChange={e => setClientFilter(e.target.value)}><option value="">Todos os clientes</option>{clientNames.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
+          {(reportType === 'agenda' || reportType === 'availability' || reportType === 'receivable') && (
+            <label className="field">Cliente{reportType === 'availability' ? <select value={clientFilter} onChange={e => setClientFilter(e.target.value)}><option value="">Todos</option>{clients.map(name => <option key={name}>{name}</option>)}</select> : <select value={clientFilter} onChange={e => setClientFilter(e.target.value)}><option value="">Todos os clientes</option>{clients.map(name => <option key={name}>{name}</option>)}</select>}</label>
+          )}
+          {reportType === 'availability' && (
+            <div className="weekday-filter report-weekdays">
+              {weekdayNames.map((name, day) => <label key={name} className="weekday-check"><input type="checkbox" checked={selectedDays.includes(day)} onChange={() => toggleDay(day)} /> {name}</label>)}
+            </div>
+          )}
         </div>
 
-        <div className="weekday-filter">
-          <span>Dias da semana:</span>
-          {weekdayNames.map((name, day) => (
-            <label key={name} className="weekday-check"><input type="checkbox" checked={selectedDays.includes(day)} onChange={() => toggleDay(day)} /> {name}</label>
-          ))}
-        </div>
-
-        {reportMode === 'availability' ? (
-          <>
-            <div className="availability-summary">
-              <div><b>{freeDates.length}</b><span>datas livres</span></div>
-              <div><b>{bookedSelectedDates.length}</b><span>datas ocupadas</span></div>
-              <div><b>{selectedDays.length}</b><span>dias da semana</span></div>
-            </div>
-
-            <div className="availability-actions">
-              <button className="primary-btn" onClick={copyAvailable}>Copiar datas para WhatsApp</button>
-              <button className="secondary-btn" onClick={() => window.print()}>Imprimir / salvar em PDF</button>
-              {copyNotice && <span>{copyNotice}</span>}
-            </div>
-
-            {startDate > endDate ? <div className="report-warning">A data inicial não pode ser posterior à data final.</div> : !freeDates.length ? <Empty text="Nenhuma data livre encontrada com os filtros selecionados." /> : (
-              <div className="available-months">
-                {Object.entries(groupedFreeDates).map(([key, dates]) => {
-                  const month = Number(key.slice(5, 7));
-                  const year = Number(key.slice(0, 4));
-                  return <div className="available-month" key={key}>
-                    <h3>{monthNames[month - 1]} de {year}</h3>
-                    <div className="available-date-grid">
-                      {dates.map(item => {
-                        const d = dateFromISO(item.iso);
-                        return <div className="available-date" key={item.iso}><b>{shortWeekday[item.day]}</b><strong>{String(d.getDate()).padStart(2, '0')}</strong><small>{formatLongDate(item.iso)}</small></div>;
-                      })}
-                    </div>
-                  </div>;
-                })}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="report-table-wrap">
-            <table>
-              <thead><tr><th>Data</th><th>Dia</th><th>Horário</th><th>Evento</th><th>Cliente</th><th>Local</th><th>Situação</th></tr></thead>
-              <tbody>
-                {agendaEvents.map(event => {
-                  const d = dateFromISO(event.date);
-                  return <tr key={event.id}><td>{formatDate(event.date)}</td><td>{weekdayNames[d.getDay()]}</td><td>{formatTime(event.time) || '—'}</td><td>{event.title || event.type || 'Evento fotográfico'}</td><td>{event.clientName || '—'}</td><td>{event.location || '—'}</td><td>{event.status || 'Agendado'}</td></tr>;
-                })}
-              </tbody>
-            </table>
-            {!agendaEvents.length && <Empty text="Nenhum evento encontrado com os filtros selecionados." />}
+        {reportType === 'availability' && (
+          <div className="report-inline-actions">
+            <button className="secondary-btn" onClick={copyAvailable}>Copiar datas para WhatsApp</button>
+            {copyNotice && <span>{copyNotice}</span>}
           </div>
         )}
+
+        {startDate > endDate ? <div className="report-warning">A data inicial não pode ser posterior à data final.</div> : (
+          <>
+            {reportType === 'agenda' && <ReportTable columns={['Data','Dia','Horário','Evento','Cliente','Local','Valor','Situação']} rows={events.map(e => { const d=dateFromISO(e.date); return [formatDate(e.date), weekdayNames[d?.getDay() ?? 0], formatTime(e.time)||'—', e.title||e.type||'Evento fotográfico', e.clientName||'—', e.location||'—', money(e.value), e.status||'Agendado']; })} empty="Nenhum evento encontrado no período." />}
+            {reportType === 'receivable' && <ReportTable columns={['Vencimento','Cliente','Descrição','Valor','Recebido','Saldo','Situação']} rows={receivables.map(a => { const received=receivedFor(a); const balance=Math.max(0,Number(a.amount||0)-received); return [formatDate(a.dueDate),a.person||'—',a.description||'—',money(a.amount),money(received),money(balance),a.status|| (balance<=0?'Pago':'Pendente')]; })} empty="Nenhuma conta a receber no período." />}
+            {reportType === 'payable' && <ReportTable columns={['Vencimento','Fornecedor','Descrição','Valor','Pago','Saldo','Situação']} rows={payables.map(a => { const paid=paidFor(a); const balance=Math.max(0,Number(a.amount||0)-paid); return [formatDate(a.dueDate),a.person||'—',a.description||'—',money(a.amount),money(paid),money(balance),a.status|| (balance<=0?'Pago':'Pendente')]; })} empty="Nenhuma conta a pagar no período." />}
+            {reportType === 'transactions' && <ReportTable columns={['Data','Tipo','Descrição','Categoria','Pessoa','Forma','Valor']} rows={transactions.map(x => [formatDate(x.date),x.type||'—',x.description||'—',x.category||'—',x.person||'—',x.method||'—',money(x.amount)])} empty="Nenhuma movimentação no período." />}
+            {reportType === 'availability' && <ReportTable columns={['Data','Dia','Situação']} rows={availabilityDates.map(x => [formatDate(x.iso),weekdayNames[x.day],bookedDates.has(x.iso)?'Agendada':'Disponível']).filter((_,i) => true).filter(row => row[2] === 'Disponível')} empty="Nenhuma data disponível com os filtros selecionados." />}
+          </>
+        )}
+
+        {reportType === 'availability' && startDate <= endDate && <p className="report-note">A disponibilidade é calculada considerando eventos ativos da Agenda. Eventos cancelados não bloqueiam a data.</p>}
       </section>
-
-      <div className="dashboard-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <div><h2>Contas a receber</h2><p>Saldo pendente por cliente</p></div>
-          </div>
-          {(data.receivable || [])
-            .filter(x => Number(x.amount || 0) > Number(x.paid || 0))
-            .map(x => (
-              <div className="money-row" key={x.id}>
-                <span>{x.person} · {x.description}</span>
-                <b>{money(Number(x.amount) - Number(x.paid || 0))}</b>
-              </div>
-            ))}
-          {!data.receivable?.some(x => Number(x.amount || 0) > Number(x.paid || 0)) && <Empty text="Nenhuma conta pendente." />}
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <div><h2>Contas a pagar</h2><p>Saldo pendente por fornecedor</p></div>
-          </div>
-          {(data.payable || [])
-            .filter(x => Number(x.amount || 0) > Number(x.paid || 0))
-            .map(x => (
-              <div className="money-row" key={x.id}>
-                <span>{x.person} · {x.description}</span>
-                <b>{money(Number(x.amount) - Number(x.paid || 0))}</b>
-              </div>
-            ))}
-          {!data.payable?.some(x => Number(x.amount || 0) > Number(x.paid || 0)) && <Empty text="Nenhuma conta pendente." />}
-        </section>
-      </div>
-    </>
+    </div>
   );
+}
+
+function ReportTable({ columns, rows, empty }) {
+  return <div className="report-list-wrap">
+    <table className="report-list-table">
+      <thead><tr>{columns.map(c => <th key={c}>{c}</th>)}</tr></thead>
+      <tbody>{rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
+    </table>
+    {!rows.length && <Empty text={empty} />}
+  </div>;
 }
 
 function SettingsPage({ data, onSave }) {
