@@ -701,9 +701,9 @@ function App() {
                               <td key={f[0]}>
                                 {['amount', 'price', 'value', 'paid'].includes(f[0])
                                   ? money(item[f[0]])
-                                  : f[0] === 'date' || f[0] === 'dueDate'
+                                  : ['date', 'dueDate', 'endDate'].includes(f[0])
                                     ? formatDate(item[f[0]])
-                                    : f[0] === 'time'
+                                    : ['time', 'endTime'].includes(f[0])
                                       ? formatTime(item[f[0]]) || '—'
                                       : item[f[0]] || '—'}
                               </td>
