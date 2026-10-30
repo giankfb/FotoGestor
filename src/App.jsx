@@ -245,6 +245,7 @@ function App() {
   const [period, setPeriod] = useState(currentMonth());
   const [paymentModal, setPaymentModal] = useState(null);
   const [googleImportOpen, setGoogleImportOpen] = useState(false);
+  const [googleImporting, setGoogleImporting] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
@@ -368,12 +369,23 @@ function App() {
   };
 
   const importGoogleEvents = async ids => {
+    if (googleImporting) return;
+    setGoogleImporting(true);
+    setError('');
+    setNotice('Importando eventos do Google Agenda... aguarde.');
     try {
       const result = await api('googleCalendarImport', { ids });
       setGoogleImportOpen(false);
-      setNotice(`${result.imported || 0} evento(s) importado(s). Edite o evento para informar cliente e valor; o Contas a Receber será criado ao salvar um valor contratado.`);
+      const imported = Number(result?.imported || 0);
+      const skipped = Number(result?.skipped || 0);
+      setNotice(`${imported} evento(s) importado(s)${skipped ? ` · ${skipped} já existente(s) ou indisponível(is), ignorado(s)` : ''}.`);
       await refresh();
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      setError(e.message);
+      setNotice('');
+    } finally {
+      setGoogleImporting(false);
+    }
   };
 
   const createClient = async client => {
@@ -738,6 +750,7 @@ function App() {
         <GoogleImportModal
           close={() => setGoogleImportOpen(false)}
           importEvents={importGoogleEvents}
+          importing={googleImporting}
         />
       )}
 
@@ -787,7 +800,7 @@ function Empty({ text }) {
   );
 }
 
-function GoogleImportModal({ close, importEvents }) {
+function GoogleImportModal({ close, importEvents, importing=false }) {
   const defaultStart = today();
   const d = new Date(); d.setDate(d.getDate() + 180);
   const defaultEnd = localISODate(d);
@@ -815,7 +828,7 @@ function GoogleImportModal({ close, importEvents }) {
         <div className="modal-head">
           <div>
             <p className="eyebrow">GOOGLE AGENDA</p>
-            <h2>Importar da agenda “eventos”</h2>
+            <h2>Importar da agenda “02 EVENTOS”</h2>
             <p className="hint">Os eventos particulares da agenda principal não entram nesta sincronização.</p>
           </div>
           <button className="icon-btn" onClick={close}><X /></button>
@@ -825,11 +838,13 @@ function GoogleImportModal({ close, importEvents }) {
           <label className="field">De<input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
           <label className="field">Até<input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
         </div>
-        <button className="secondary-btn" onClick={load} disabled={loading}>
+        <button className="secondary-btn" onClick={load} disabled={loading || importing}>
           <RefreshCw size={15} /> {loading ? 'Consultando...' : 'Buscar eventos'}
         </button>
 
         {error && <div className="alert error" style={{marginTop:12}}><AlertCircle size={16}/>{error}</div>}
+
+        {importing && <div className="alert" style={{marginTop:12}}><RefreshCw size={16} className="spin"/> Importação em andamento. Não clique novamente; o sistema está salvando os eventos na planilha.</div>}
 
         {items.length > 0 && (
           <div className="panel" style={{marginTop:16, maxHeight:360, overflow:'auto'}}>
@@ -863,9 +878,9 @@ function GoogleImportModal({ close, importEvents }) {
         )}
 
         <div className="modal-actions">
-          <button type="button" className="secondary-btn" onClick={close}>Cancelar</button>
-          <button type="button" className="primary-btn" disabled={!selected.size || loading} onClick={() => importEvents([...selected])}>
-            <CheckCircle2 size={16}/> Importar selecionados ({selected.size})
+          <button type="button" className="secondary-btn" onClick={close} disabled={importing}>Cancelar</button>
+          <button type="button" className="primary-btn" disabled={!selected.size || loading || importing} onClick={() => importEvents([...selected])}>
+            <RefreshCw size={16} className={importing ? 'spin' : ''}/> {importing ? 'Importando...' : `Importar selecionados (${selected.size})`}
           </button>
         </div>
       </div>

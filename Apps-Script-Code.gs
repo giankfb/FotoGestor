@@ -275,10 +275,15 @@ function authorizeGoogleCalendar(){
 
 function installGoogleCalendarSync_(){
   const handler='syncGoogleToFotoGestor_';
-  ScriptApp.getProjectTriggers().forEach(t=>{
-    if(t.getHandlerFunction()===handler) ScriptApp.deleteTrigger(t);
+  const triggers=ScriptApp.getProjectTriggers();
+  let found=false;
+  triggers.forEach(t=>{
+    if(t.getHandlerFunction()===handler){
+      if(found) ScriptApp.deleteTrigger(t);
+      else found=true;
+    }
   });
-  ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
+  if(!found) ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
 }
 
 // Execute manualmente uma vez, se quiser instalar/reinstalar a sincronização.
@@ -295,15 +300,9 @@ function googleCalendar_(){
   const cal=findEventosCalendar_();
   props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
   props.setProperty('GOOGLE_CALENDAR_NAME', cal.getName());
-  ensureGoogleCalendarSyncTrigger_();
   return cal;
 }
 
-function ensureGoogleCalendarSyncTrigger_(){
-  const handler='syncGoogleToFotoGestor_';
-  const exists=ScriptApp.getProjectTriggers().some(t=>t.getHandlerFunction()===handler);
-  if(!exists) ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
-}
 
 function calendarForEvent_(event){
   if(event && event.googleCalendarId){
@@ -482,11 +481,15 @@ function listGoogleCalendarEvents_(data){
 }
 
 function importGoogleCalendarEvents_(data){
-  const ids=(data.ids||[]).map(String); if(!ids.length) return {imported:0,skipped:0};
-  const cal=googleCalendar_(); const sh=ss_().getSheetByName('Eventos'); const vals=sh.getDataRange().getValues(), h=vals[0].map(String), gidc=h.indexOf('googleEventId');
-  const existing={}; if(gidc>=0) for(let i=1;i<vals.length;i++) if(vals[i][gidc]) existing[String(vals[i][gidc])]=true;
-  let imported=0,skipped=0;
-  ids.forEach(id=>{
+  const ids=[...new Set((data.ids||[]).map(String).filter(Boolean))];
+  if(!ids.length) return {imported:0,skipped:0};
+  const lock=LockService.getScriptLock();
+  if(!lock.tryLock(5000)) throw new Error('Já existe uma importação em andamento. Aguarde a conclusão antes de tentar novamente.');
+  try {
+    const cal=googleCalendar_(); const sh=ss_().getSheetByName('Eventos'); const vals=sh.getDataRange().getValues(), h=vals[0].map(String), gidc=h.indexOf('googleEventId');
+    const existing={}; if(gidc>=0) for(let i=1;i<vals.length;i++) if(vals[i][gidc]) existing[String(vals[i][gidc])]=true;
+    let imported=0,skipped=0;
+    ids.forEach(id=>{
     if(existing[id]){ skipped++; return; }
     let ev=null; try{ ev=cal.getEventById(id); }catch(e){ ev=null; }
     if(!ev){ skipped++; return; }
@@ -496,9 +499,14 @@ function importGoogleCalendarEvents_(data){
     let importedClient='';
     try { const cs=ss_().getSheetByName('Clientes'); if(cs && cs.getLastRow()>1){ const cv=cs.getDataRange().getValues(), ch=cv[0].map(String), nc=ch.indexOf('name'); if(nc>=0){ const found=cv.slice(1).find(r=>String(r[nc]||'').trim().toLowerCase()===googleTitle.trim().toLowerCase()); if(found) importedClient=String(found[nc]||'').trim(); } } } catch(ignore) {}
     const item={id:Utilities.getUuid(),title:googleTitle,clientName:importedClient,date:start,time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'),endDate:end,endTime:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getEndTime(),cal.getTimeZone(),'HH:mm'),type:'',location:ev.getLocation()||'',value:0,status:'Confirmado',notes:'Importado do Google Agenda — informe cliente e valor contratado no FotoGestor.',googleEventId:ev.getId(),googleCalendarId:cal.getId(),createdAt:new Date(),updatedAt:new Date()};
-    saveRow_('Eventos',item,false); imported++;
-  });
-  return {imported:imported,skipped:skipped};
+      saveRow_('Eventos',item,false);
+      existing[id]=true;
+      imported++;
+    });
+    return {imported:imported,skipped:skipped};
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function syncGoogleToFotoGestor_(){

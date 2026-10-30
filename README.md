@@ -89,3 +89,13 @@ npm run build
 - Corrigido o intervalo de eventos de dia inteiro no Google: um evento de 07/12 a 10/12 ocupa os quatro dias corretamente.
 - Importação do Google tenta vincular automaticamente o evento a um cliente já cadastrado quando o título coincide exatamente com o nome do cliente.
 - Nenhum valor financeiro é enviado ao Google Calendar.
+
+
+## V15.2 — importação segura e autorização da sincronização
+- Adicionada a permissão `https://www.googleapis.com/auth/script.scriptapp` ao manifesto do Apps Script.
+- O acesso normal ao Google Calendar não tenta mais consultar gatilhos a cada chamada; o gatilho é instalado apenas pela autorização/configuração.
+- A instalação do gatilho ficou idempotente: mantém um único gatilho de sincronização de 5 minutos.
+- Importação do Google protegida com `LockService` e deduplicação por `googleEventId`.
+- Botão de importação mostra `Importando...`, fica bloqueado durante a operação e informa que os eventos estão sendo salvos.
+- A importação exibe o resultado com quantidade importada e quantidade ignorada.
+- O modal identifica a agenda como `02 EVENTOS`.
