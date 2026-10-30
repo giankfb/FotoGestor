@@ -63,10 +63,10 @@ const entities = {
     fields: [
       ['title', 'Evento', 'text', true],
       ['clientName', 'Cliente', 'client', true],
-      ['date', 'Data de início', 'date', true],
-      ['endDate', 'Data de término', 'date'],
-      ['time', 'Horário de início', 'time'],
-      ['endTime', 'Horário de término', 'time'],
+      ['date', 'Data inicial', 'date', true],
+      ['time', 'Horário inicial', 'time'],
+      ['endDate', 'Data final', 'date'],
+      ['endTime', 'Horário final', 'time'],
       ['type', 'Tipo de evento', 'text'],
       ['location', 'Local', 'text'],
       ['value', 'Valor contratado (R$)', 'number'],
@@ -268,7 +268,8 @@ function App() {
         normalized[key] = (normalized[key] || []).map(item => ({
           ...item,
           ...(item.date !== undefined ? { date: normalizeDateValue(item.date) } : {}),
-          ...(item.dueDate !== undefined ? { dueDate: normalizeDateValue(item.dueDate) } : {})
+          ...(item.dueDate !== undefined ? { dueDate: normalizeDateValue(item.dueDate) } : {}),
+          ...(item.endDate !== undefined ? { endDate: normalizeDateValue(item.endDate) } : {})
         }));
       }
       setData(normalized);
@@ -295,6 +296,7 @@ function App() {
       // Nunca envie uma data de negócio convertida por UTC.
       if (next.date !== undefined) next.date = normalizeDateValue(next.date);
       if (next.dueDate !== undefined) next.dueDate = normalizeDateValue(next.dueDate);
+      if (next.endDate !== undefined) next.endDate = normalizeDateValue(next.endDate);
 
       if (key === 'events' && next.time) {
         next.time = formatTime(next.time) || next.time;
@@ -521,7 +523,7 @@ function App() {
                     setActive('events');
                     setModal({
                       entity: 'events',
-                      item: { date: today(), endDate: today(), status: 'Confirmado' }
+                      item: { date: today(), status: 'Confirmado' }
                     });
                   }}
                 >
@@ -882,9 +884,9 @@ function RecordModal({
 }) {
   const [form, setForm] = useState(() => ({
     ...item,
-    endDate: item.endDate || item.date || '',
     time: item.time ? formatTime(item.time) : '',
-    endTime: item.endTime ? formatTime(item.endTime) : ''
+    endTime: item.endTime ? formatTime(item.endTime) : '',
+    endDate: normalizeDateValue(item.endDate || item.date || '')
   }));
 
   const [showNewClient, setShowNewClient] = useState(false);
@@ -918,7 +920,7 @@ function RecordModal({
 
     setForm(current => ({
       ...current,
-      [key]: (key === 'time' || key === 'endTime') ? (formatTime(value) || value) : value
+      [key]: key === 'time' ? (formatTime(value) || value) : value
     }));
   };
 
@@ -962,11 +964,13 @@ function RecordModal({
 
           const payload = { ...form };
           if (entity === 'events') {
-            payload.date = normalizeDateValue(payload.date || today());
-            payload.endDate = normalizeDateValue(payload.endDate || payload.date);
-            if (payload.endDate < payload.date) payload.endDate = payload.date;
-            if (payload.time) payload.time = formatTime(payload.time) || payload.time;
-            if (payload.endTime) payload.endTime = formatTime(payload.endTime) || payload.endTime;
+            payload.time = payload.time ? (formatTime(payload.time) || payload.time) : '';
+            payload.endTime = payload.endTime ? (formatTime(payload.endTime) || payload.endTime) : '';
+            if (!payload.endDate) payload.endDate = payload.date;
+            if (payload.endDate < payload.date) {
+              alert('A data final não pode ser anterior à data inicial.');
+              return;
+            }
           }
 
           save(entity, payload);

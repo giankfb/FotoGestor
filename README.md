@@ -69,12 +69,23 @@ npm run build
 - Eventos cancelados permanecem cinza.
 - Eventos de dia inteiro continuam sendo importados/criados como eventos de dia inteiro.
 
-## V15 — sincronização agenda
-- Google Calendar fixado na agenda `02 EVENTOS`.
-- Valores financeiros nunca são enviados ao Google Calendar.
-- FotoGestor continua sendo a fonte oficial do financeiro.
-- Sincronização bidirecional dos dados de agenda: título, data, data final, horário, horário final e local.
-- A leitura do FotoGestor atualiza automaticamente esses campos a partir do evento correspondente no Google.
-- Eventos podem ocupar vários dias como um único cadastro, usando Data de início e Data de término.
-- Eventos de dia inteiro continuam como eventos de dia inteiro no Google.
-- Cores continuam sob controle do FotoGestor: vermelho pendente, amarelo parcial, verde pago e cinza cancelado.
+
+## V15 — Google Calendar bidirecional e agenda 02 EVENTOS
+- A agenda do Google usada pelo FotoGestor é exclusivamente `02 EVENTOS`; a agenda principal não é usada.
+- O nome da agenda fica centralizado na função `googleCalendarName_()` do Apps Script.
+- Valores financeiros nunca são enviados para o Google Calendar.
+- Eventos novos/pendentes começam vermelhos; parciais ficam amarelos; pagos ficam verdes; cancelados ficam cinza.
+- O evento pode ter data inicial/final e horário inicial/final, permitindo um único cadastro para eventos de vários dias.
+- Alterações operacionais no FotoGestor (título, data, horário, duração, local) são refletidas no Google.
+- Alterações operacionais feitas no Google são verificadas automaticamente pelo Apps Script a cada 5 minutos e refletidas no FotoGestor.
+- O financeiro continua sendo exclusivo do FotoGestor. A sincronização do Google não altera valor, recebimentos, contas a receber ou situação financeira.
+- Para eventos de dia inteiro com vários dias, o Google usa corretamente a data final exclusiva internamente, enquanto o FotoGestor mostra a última data do evento.
+- Exclusões no Google não apagam automaticamente eventos do FotoGestor, para evitar perda acidental de dados/financeiro.
+
+### V15.1 — cliente no título e datas de múltiplos dias
+- O título exibido no Google Calendar passa a usar automaticamente o **cliente/contratante selecionado no FotoGestor**; se ainda não houver cliente, usa o título do evento como fallback.
+- Alterações manuais do título no Google não sobrescrevem o vínculo do cliente no FotoGestor.
+- A data final do formulário é normalizada para `YYYY-MM-DD` internamente, sendo exibida no padrão brasileiro `DD/MM/AAAA`.
+- Corrigido o intervalo de eventos de dia inteiro no Google: um evento de 07/12 a 10/12 ocupa os quatro dias corretamente.
+- Importação do Google tenta vincular automaticamente o evento a um cliente já cadastrado quando o título coincide exatamente com o nome do cliente.
+- Nenhum valor financeiro é enviado ao Google Calendar.

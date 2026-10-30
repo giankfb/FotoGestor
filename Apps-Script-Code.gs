@@ -3,7 +3,7 @@ const SHEETS = {
   Clientes: ['id','name','phone','email','document','address','notes','createdAt','updatedAt'],
   Fornecedores: ['id','name','category','phone','email','document','notes','createdAt','updatedAt'],
   Servicos: ['id','name','category','price','description','createdAt','updatedAt'],
-  Eventos: ['id','title','clientName','date','endDate','time','endTime','type','location','value','status','notes','googleEventId','googleCalendarId','createdAt','updatedAt'],
+  Eventos: ['id','title','clientName','date','time','endDate','endTime','type','location','value','status','notes','googleEventId','googleCalendarId','createdAt','updatedAt'],
   Lancamentos: ['id','type','date','description','category','person','method','amount','status','sourceType','sourceId','createdAt','updatedAt'],
   ContasReceber: ['id','eventId','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
   Recebimentos: ['id','receivableId','eventId','date','amount','method','notes','cashTransactionId','createdAt','updatedAt'],
@@ -16,7 +16,7 @@ function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     const action = String(body.action || '');
-    if (action === 'read') { syncGoogleChanges_(); return json_({ok:true,data:readAll_()});}
+    if (action === 'read') return json_({ok:true,data:readAll_()});
     if (action === 'settings') { saveSettings_(body.data || {}); return json_({ok:true,data:true}); }
     if (action === 'googleCalendarList') return json_({ok:true,data:listGoogleCalendarEvents_(body.data || {})});
     if (action === 'googleCalendarImport') return json_({ok:true,data:importGoogleCalendarEvents_(body.data || {})});
@@ -37,7 +37,7 @@ function ss_() { const id=PropertiesService.getScriptProperties().getProperty('S
 function setupFotoGestor() {
   const ss=SpreadsheetApp.create('FotoGestor - Banco de dados');
   PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID',ss.getId());
-  Object.keys(SHEETS).forEach(name=>{let sh=ss.getSheetByName(name);if(!sh)sh=ss.insertSheet(name);sh.clear();sh.getRange(1,1,1,SHEETS[name].length).setValues([SHEETS[name]]);sh.setFrozenRows(1);sh.getRange(1,1,1,SHEETS[name].length).setFontWeight('bold').setBackground('#101827').setFontColor('#ffffff');['date','dueDate','endDate','time','endTime'].forEach(h=>{const c=SHEETS[name].indexOf(h);if(c>=0)sh.getRange(2,c+1,Math.max(1,sh.getMaxRows()-1),1).setNumberFormat('@');});});
+  Object.keys(SHEETS).forEach(name=>{let sh=ss.getSheetByName(name);if(!sh)sh=ss.insertSheet(name);sh.clear();sh.getRange(1,1,1,SHEETS[name].length).setValues([SHEETS[name]]);sh.setFrozenRows(1);sh.getRange(1,1,1,SHEETS[name].length).setFontWeight('bold').setBackground('#101827').setFontColor('#ffffff');['date','dueDate','time','endDate','endTime'].forEach(h=>{const c=SHEETS[name].indexOf(h);if(c>=0)sh.getRange(2,c+1,Math.max(1,sh.getMaxRows()-1),1).setNumberFormat('@');});});
   const first=ss.getSheetByName('Sheet1');if(first)ss.deleteSheet(first);
   Logger.log('Planilha criada: '+ss.getUrl()); return ss.getUrl();
 }
@@ -172,7 +172,7 @@ function saveRow_(sheetName,item,isUpdate) {
   if(!isUpdate&&rowIndex>0)throw new Error('Este registro já existe.');
 
   const now=new Date();
-  const dateFields={date:true,dueDate:true};
+  const dateFields={date:true,dueDate:true,endDate:true};
   const record=headers.map(h=>{
     if(h==='createdAt') return item.createdAt||now;
     if(h==='updatedAt') return now;
@@ -246,20 +246,21 @@ function deleteRow_(sheetName,id) {
   throw new Error('Registro não encontrado.');
 }
 
+function googleCalendarName_(){
+  // Nome da agenda de trabalho: altere somente aqui se um dia quiser renomeá-la.
+  return '02 EVENTOS';
+}
+
 function findEventosCalendar_(){
-  const NAME = '02 EVENTOS';
-  // Não usamos a agenda principal como fallback: o FotoGestor deve trabalhar
-  // exclusivamente com a agenda de trabalho chamada "02 EVENTOS".
+  const NAME = googleCalendarName_();
   let calendars=[];
   try { calendars=CalendarApp.getCalendarsByName(NAME) || []; } catch(e) { calendars=[]; }
   if(!calendars.length){
     try { calendars=CalendarApp.getOwnedCalendarsByName(NAME) || []; } catch(e) { calendars=[]; }
   }
-  // Comparação sem diferenciar maiúsculas/minúsculas, para evitar problemas
-  // caso o nome tenha sido digitado como "Eventos", "EVENTOS", etc.
-  const wanted=NAME.toLowerCase();
+  const wanted=NAME.trim().toLowerCase();
   const cal=calendars.find(c=>String(c.getName()||'').trim().toLowerCase()===wanted);
-  if(!cal) throw new Error('A agenda "02 EVENTOS" não foi encontrada. Crie/compartilhe uma agenda com esse nome no Google Calendar e tente novamente. A agenda principal não será usada pelo FotoGestor.');
+  if(!cal) throw new Error('A agenda "'+NAME+'" não foi encontrada. Crie/compartilhe essa agenda no Google Calendar. A agenda principal não será usada pelo FotoGestor.');
   return cal;
 }
 
@@ -268,7 +269,25 @@ function authorizeGoogleCalendar(){
   const cal=findEventosCalendar_();
   props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
   props.setProperty('GOOGLE_CALENDAR_NAME', cal.getName());
-  return 'Google Agenda autorizada: ' + cal.getName();
+  installGoogleCalendarSync_();
+  return 'Google Agenda autorizada: ' + cal.getName() + '. Sincronização bidirecional ativada.';
+}
+
+function installGoogleCalendarSync_(){
+  const handler='syncGoogleToFotoGestor_';
+  ScriptApp.getProjectTriggers().forEach(t=>{
+    if(t.getHandlerFunction()===handler) ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
+}
+
+// Execute manualmente uma vez, se quiser instalar/reinstalar a sincronização.
+function setupGoogleCalendarSync(){
+  const cal=findEventosCalendar_();
+  PropertiesService.getScriptProperties().setProperty('GOOGLE_CALENDAR_ID',cal.getId());
+  PropertiesService.getScriptProperties().setProperty('GOOGLE_CALENDAR_NAME',cal.getName());
+  installGoogleCalendarSync_();
+  return 'Sincronização bidirecional instalada para a agenda: '+cal.getName();
 }
 
 function googleCalendar_(){
@@ -276,7 +295,14 @@ function googleCalendar_(){
   const cal=findEventosCalendar_();
   props.setProperty('GOOGLE_CALENDAR_ID', cal.getId());
   props.setProperty('GOOGLE_CALENDAR_NAME', cal.getName());
+  ensureGoogleCalendarSyncTrigger_();
   return cal;
+}
+
+function ensureGoogleCalendarSyncTrigger_(){
+  const handler='syncGoogleToFotoGestor_';
+  const exists=ScriptApp.getProjectTriggers().some(t=>t.getHandlerFunction()===handler);
+  if(!exists) ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
 }
 
 function calendarForEvent_(event){
@@ -296,10 +322,29 @@ function eventDateTime_(dateStr,timeStr){
   return new Date(y,m,day,Number(t[1]),Number(t[2]),0,0);
 }
 
+function eventEnd_(event,start,allDay){
+  if(allDay){
+    const endDate=normalizeDate_(event.endDate||event.date)||event.date;
+    const end=eventDateTime_(endDate,'');
+    // Google usa data final exclusiva para eventos de dia inteiro.
+    if(end.getTime()<=start.getTime()) end.setDate(start.getDate()+1);
+    else end.setDate(end.getDate()+1);
+    return end;
+  }
+  if(event.endDate || event.endTime){
+    const end=eventDateTime_(event.endDate||event.date,event.endTime||event.time);
+    if(end.getTime()>start.getTime()) return end;
+  }
+  return new Date(start.getTime()+60*60*1000);
+}
+
 function googleEventDescription_(event){
   const lines=[];
   if(event.clientName) lines.push('Cliente: '+event.clientName);
   if(event.type) lines.push('Tipo: '+event.type);
+  // Não enviar valor financeiro ao Google Calendar.
+  if(event.notes) lines.push('Observações: '+event.notes);
+  lines.push('FotoGestor ID: '+event.id);
   return lines.join('\n');
 }
 
@@ -312,6 +357,28 @@ function saveGoogleEventIds_(eventId, googleEventId, calendarId){
   if(cc>=0) sh.getRange(row,cc+1).setValue(calendarId||'');
 }
 
+function updateEventOperationalFields_(eventId, fields){
+  const row=findRowById_('Eventos',eventId); if(row<0) return false;
+  const sh=ss_().getSheetByName('Eventos');
+  const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
+  Object.keys(fields).forEach(k=>{
+    const c=h.indexOf(k); if(c>=0) sh.getRange(row,c+1).setValue(fields[k]);
+  });
+  const uc=h.indexOf('updatedAt'); if(uc>=0) sh.getRange(row,uc+1).setValue(new Date());
+  return true;
+}
+
+function clientNameForEvent_(event){
+  const name=String(event && event.clientName || '').trim();
+  return name;
+}
+
+function googleEventTitle_(event){
+  // O título exibido no Google é sempre o contratante selecionado no FotoGestor.
+  // Se ainda não houver cliente vinculado, usa o título do evento como fallback.
+  return clientNameForEvent_(event) || String(event && (event.title || event.type) || 'Evento FotoGestor');
+}
+
 function syncGoogleCalendarEvent_(event, mode){
   if(!event || !event.id || !event.date) return;
   const cal=calendarForEvent_(event);
@@ -319,22 +386,20 @@ function syncGoogleCalendarEvent_(event, mode){
   let googleEventId=String(event.googleEventId||'');
   let gEvent=null;
   if(googleEventId){ try { gEvent=cal.getEventById(googleEventId); } catch(e) { gEvent=null; } }
-  const title=String(event.title||event.type||'Evento FotoGestor');
+  const title=googleEventTitle_(event);
   const description=googleEventDescription_(event);
   const location=String(event.location||'');
   const hasTime=!!normalizeTime_(event.time);
-  const endDate=normalizeDate_(event.endDate||event.date)||event.date;
-  const endTime=normalizeTime_(event.endTime||'');
   if(!gEvent){
     if(hasTime){
       const start=eventDateTime_(event.date,event.time);
-      let end=endTime?eventDateTime_(endDate,endTime):new Date(start.getTime()+60*60*1000);
-      if(end<=start) end=new Date(start.getTime()+60*60*1000);
-      gEvent=cal.createEvent(title,start,end,{description:description,location:location});
+      gEvent=cal.createEvent(title,start,eventEnd_(event,start,false),{description:description,location:location});
     } else {
       const day=eventDateTime_(event.date,'');
-      const last=eventDateTime_(endDate,'');
-      gEvent=(endDate!==event.date)?cal.createAllDayEvent(title,day,new Date(last.getTime()+24*60*60*1000),{description:description,location:location}):cal.createAllDayEvent(title,day,{description:description,location:location});
+      gEvent=cal.createAllDayEvent(title,day,{description:description,location:location});
+      if(event.endDate && normalizeDate_(event.endDate)!==normalizeDate_(event.date)){
+        try { const endExclusive=eventDateTime_(event.endDate,''); endExclusive.setDate(endExclusive.getDate()+1); gEvent.setAllDayDates(day,endExclusive); } catch(ignore) {}
+      }
     }
     googleEventId=gEvent.getId();
     setGoogleEventColor_(gEvent,event);
@@ -344,15 +409,14 @@ function syncGoogleCalendarEvent_(event, mode){
   try {
     if(hasTime){
       const start=eventDateTime_(event.date,event.time);
-      let end=endTime?eventDateTime_(endDate,endTime):new Date(start.getTime()+60*60*1000);
-      if(end<=start) end=new Date(start.getTime()+60*60*1000);
+      const end=eventEnd_(event,start,false);
       gEvent.setTitle(title); gEvent.setTime(start,end);
     } else {
       const day=eventDateTime_(event.date,'');
-      const last=eventDateTime_(endDate,'');
-      if(endDate!==event.date) gEvent.setAllDayDates(day,new Date(last.getTime()+24*60*60*1000));
-      else gEvent.setAllDayDate(day);
       gEvent.setTitle(title);
+      const endDate=normalizeDate_(event.endDate||event.date)||event.date;
+      if(endDate!==normalizeDate_(event.date)){ const endExclusive=eventDateTime_(endDate,''); endExclusive.setDate(endExclusive.getDate()+1); gEvent.setAllDayDates(day,endExclusive); }
+      else gEvent.setAllDayDate(day);
     }
     gEvent.setLocation(location);
     gEvent.setDescription(description);
@@ -363,44 +427,18 @@ function syncGoogleCalendarEvent_(event, mode){
     let recreated;
     if(hasTime){
       const start=eventDateTime_(event.date,event.time);
-      let end=endTime?eventDateTime_(endDate,endTime):new Date(start.getTime()+60*60*1000);
-      if(end<=start) end=new Date(start.getTime()+60*60*1000);
-      recreated=cal.createEvent(title,start,end,{description:description,location:location});
+      recreated=cal.createEvent(title,start,eventEnd_(event,start,false),{description:description,location:location});
     } else {
-      const day=eventDateTime_(event.date,''); const last=eventDateTime_(endDate,'');
-      recreated=(endDate!==event.date)?cal.createAllDayEvent(title,day,new Date(last.getTime()+24*60*60*1000),{description:description,location:location}):cal.createAllDayEvent(title,day,{description:description,location:location});
+      const day=eventDateTime_(event.date,'');
+      recreated=cal.createAllDayEvent(title,day,{description:description,location:location});
+      const endDate=normalizeDate_(event.endDate||event.date)||event.date;
+      if(endDate!==normalizeDate_(event.date)){ try{ const endExclusive=eventDateTime_(endDate,''); endExclusive.setDate(endExclusive.getDate()+1); recreated.setAllDayDates(day,endExclusive); }catch(ignore){} }
     }
     setGoogleEventColor_(recreated,event);
     saveGoogleEventIds_(event.id,recreated.getId(),calendarId);
   }
 }
 
-function syncGoogleChanges_(){
-  ensureStructure_();
-  const sh=ss_().getSheetByName('Eventos');
-  if(!sh || sh.getLastRow()<2) return 0;
-  const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
-  const idx={}; h.forEach((k,i)=>idx[k]=i);
-  const vals=sh.getDataRange().getValues();
-  let changed=0;
-  for(let i=1;i<vals.length;i++){
-    const gid=String(vals[i][idx.googleEventId]||''); if(!gid) continue;
-    let cal=null, ev=null;
-    try { cal=vals[i][idx.googleCalendarId]?CalendarApp.getCalendarById(String(vals[i][idx.googleCalendarId])):googleCalendar_(); ev=cal&&cal.getEventById(gid); } catch(e) { ev=null; }
-    if(!ev) continue;
-    const date=Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd');
-    const time=ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm');
-    const end=ev.getEndTime();
-    const endDate=Utilities.formatDate(new Date(end.getTime()-(ev.isAllDayEvent()?24*60*60*1000:0)),cal.getTimeZone(),'yyyy-MM-dd');
-    const endTime=ev.isAllDayEvent()?'':Utilities.formatDate(end,cal.getTimeZone(),'HH:mm');
-    const title=ev.getTitle()||''; const location=ev.getLocation()||'';
-    const updates={title,date,endDate,time,endTime,location};
-    let rowChanged=false;
-    Object.keys(updates).forEach(k=>{ if(idx[k]>=0 && String(vals[i][idx[k]]||'')!==String(updates[k]||'')){ sh.getRange(i+1,idx[k]+1).setValue(updates[k]); rowChanged=true; } });
-    if(rowChanged){ sh.getRange(i+1,idx.updatedAt+1).setValue(new Date()); changed++; }
-  }
-  return changed;
-}
 function syncGoogleCalendarColorForEventId_(eventId){
   const row=findRowById_('Eventos',eventId); if(row<0) return;
   const sh=ss_().getSheetByName('Eventos'); const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String); const r=sh.getRange(row,1,1,h.length).getValues()[0];
@@ -416,7 +454,6 @@ function syncGoogleCalendarColorForEventId_(eventId){
 function googleEventColor_(event){
   if(!event || String(event.status||'').toLowerCase()==='cancelado') return CalendarApp.EventColor.GRAY;
   const value=Number(event.value||0);
-  // Evento sem financeiro ainda é pendente: começa em vermelho.
   if(value<=0) return CalendarApp.EventColor.RED;
   const sh=ss_().getSheetByName('ContasReceber');
   if(!sh || sh.getLastRow()<2) return CalendarApp.EventColor.RED;
@@ -431,9 +468,7 @@ function googleEventColor_(event){
   return CalendarApp.EventColor.RED;
 }
 
-function setGoogleEventColor_(gEvent,event){
-  try { gEvent.setColor(googleEventColor_(event)); } catch(e) { Logger.log('Não foi possível definir a cor do evento: '+e); }
-}
+function setGoogleEventColor_(gEvent,event){ try { gEvent.setColor(googleEventColor_(event)); } catch(e) { Logger.log('Não foi possível definir a cor do evento: '+e); } }
 
 function listGoogleCalendarEvents_(data){
   const cal=googleCalendar_();
@@ -442,51 +477,51 @@ function listGoogleCalendarEvents_(data){
   end.setDate(end.getDate()+1);
   const existingIds={};
   const sh=ss_().getSheetByName('Eventos');
-  if(sh && sh.getLastRow()>1){
-    const vals=sh.getDataRange().getValues(), h=vals[0].map(String), c=h.indexOf('googleEventId');
-    if(c>=0) for(let i=1;i<vals.length;i++) if(vals[i][c]) existingIds[String(vals[i][c])]=true;
-  }
-  return cal.getEvents(start,end).map(ev=>({
-    id:ev.getId(), title:ev.getTitle(), start:Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd'),
-    time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'),
-    end:Utilities.formatDate(ev.getEndTime(),cal.getTimeZone(),'yyyy-MM-dd HH:mm'), allDay:ev.isAllDayEvent(),
-    location:ev.getLocation()||'', description:ev.getDescription()||'', color:String(ev.getColor()||''),
-    imported:!!existingIds[String(ev.getId())]
-  })).filter(x=>!x.imported).sort((a,b)=>(a.start+' '+a.time).localeCompare(b.start+' '+b.time));
+  if(sh && sh.getLastRow()>1){ const vals=sh.getDataRange().getValues(), h=vals[0].map(String), c=h.indexOf('googleEventId'); if(c>=0) for(let i=1;i<vals.length;i++) if(vals[i][c]) existingIds[String(vals[i][c])]=true; }
+  return cal.getEvents(start,end).map(ev=>({id:ev.getId(),title:ev.getTitle(),start:Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd'),time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'),end:Utilities.formatDate(ev.getEndTime(),cal.getTimeZone(),'yyyy-MM-dd HH:mm'),allDay:ev.isAllDayEvent(),location:ev.getLocation()||'',description:ev.getDescription()||'',color:String(ev.getColor()||''),imported:!!existingIds[String(ev.getId())]})).filter(x=>!x.imported).sort((a,b)=>(a.start+' '+a.time).localeCompare(b.start+' '+b.time));
 }
 
 function importGoogleCalendarEvents_(data){
-  const ids=(data.ids||[]).map(String);
-  if(!ids.length) return {imported:0,skipped:0};
-  const cal=googleCalendar_();
-  const sh=ss_().getSheetByName('Eventos');
-  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), gidc=h.indexOf('googleEventId');
-  const existing={};
-  if(gidc>=0) for(let i=1;i<vals.length;i++) if(vals[i][gidc]) existing[String(vals[i][gidc])]=true;
+  const ids=(data.ids||[]).map(String); if(!ids.length) return {imported:0,skipped:0};
+  const cal=googleCalendar_(); const sh=ss_().getSheetByName('Eventos'); const vals=sh.getDataRange().getValues(), h=vals[0].map(String), gidc=h.indexOf('googleEventId');
+  const existing={}; if(gidc>=0) for(let i=1;i<vals.length;i++) if(vals[i][gidc]) existing[String(vals[i][gidc])]=true;
   let imported=0,skipped=0;
   ids.forEach(id=>{
     if(existing[id]){ skipped++; return; }
     let ev=null; try{ ev=cal.getEventById(id); }catch(e){ ev=null; }
     if(!ev){ skipped++; return; }
-    const item={
-      id:Utilities.getUuid(), title:ev.getTitle()||'Evento importado', clientName:'', date:Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd'),
-      endDate:Utilities.formatDate(new Date(ev.getEndTime().getTime()-(ev.isAllDayEvent()?24*60*60*1000:0)),cal.getTimeZone(),'yyyy-MM-dd'),
-      time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'),
-      endTime:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getEndTime(),cal.getTimeZone(),'HH:mm'), type:'', location:ev.getLocation()||'', value:0,
-      status:'Confirmado', notes:'Importado do Google Agenda — informe cliente e valor contratado no FotoGestor.', googleEventId:ev.getId(), googleCalendarId:cal.getId(), createdAt:new Date(), updatedAt:new Date()
-    };
+    const start=Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'yyyy-MM-dd');
+    const end=ev.isAllDayEvent() ? Utilities.formatDate(new Date(ev.getEndTime().getTime()-24*60*60*1000),cal.getTimeZone(),'yyyy-MM-dd') : Utilities.formatDate(ev.getEndTime(),cal.getTimeZone(),'yyyy-MM-dd');
+    const googleTitle=ev.getTitle()||'Evento importado';
+    let importedClient='';
+    try { const cs=ss_().getSheetByName('Clientes'); if(cs && cs.getLastRow()>1){ const cv=cs.getDataRange().getValues(), ch=cv[0].map(String), nc=ch.indexOf('name'); if(nc>=0){ const found=cv.slice(1).find(r=>String(r[nc]||'').trim().toLowerCase()===googleTitle.trim().toLowerCase()); if(found) importedClient=String(found[nc]||'').trim(); } } } catch(ignore) {}
+    const item={id:Utilities.getUuid(),title:googleTitle,clientName:importedClient,date:start,time:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),cal.getTimeZone(),'HH:mm'),endDate:end,endTime:ev.isAllDayEvent()?'':Utilities.formatDate(ev.getEndTime(),cal.getTimeZone(),'HH:mm'),type:'',location:ev.getLocation()||'',value:0,status:'Confirmado',notes:'Importado do Google Agenda — informe cliente e valor contratado no FotoGestor.',googleEventId:ev.getId(),googleCalendarId:cal.getId(),createdAt:new Date(),updatedAt:new Date()};
     saveRow_('Eventos',item,false); imported++;
   });
   return {imported:imported,skipped:skipped};
 }
 
-function deleteGoogleCalendarEvent_(googleEventId,calendarId){
-  if(!googleEventId) return;
-  try {
-    const cal=calendarId ? CalendarApp.getCalendarById(String(calendarId)) : googleCalendar_();
-    const ev=cal && cal.getEventById(String(googleEventId));
-    if(ev) ev.deleteEvent();
-  } catch(e) { Logger.log('Não foi possível excluir evento do Google Agenda: '+e); }
+function syncGoogleToFotoGestor_(){
+  const cal=googleCalendar_();
+  const sh=ss_().getSheetByName('Eventos'); if(!sh || sh.getLastRow()<2) return;
+  const vals=sh.getDataRange().getValues(), h=vals[0].map(String), idx={}; h.forEach((x,i)=>idx[x]=i);
+  const now=new Date();
+  for(let i=1;i<vals.length;i++){
+    const row=vals[i], gid=String(row[idx.googleEventId]||''); if(!gid) continue;
+    let ev=null; try{ ev=cal.getEventById(gid); }catch(e){ ev=null; }
+    if(!ev) continue;
+    const tz=cal.getTimeZone();
+    const date=Utilities.formatDate(ev.getStartTime(),tz,'yyyy-MM-dd');
+    const time=ev.isAllDayEvent()?'':Utilities.formatDate(ev.getStartTime(),tz,'HH:mm');
+    const endDate=ev.isAllDayEvent() ? Utilities.formatDate(new Date(ev.getEndTime().getTime()-24*60*60*1000),tz,'yyyy-MM-dd') : Utilities.formatDate(ev.getEndTime(),tz,'yyyy-MM-dd');
+    const endTime=ev.isAllDayEvent()?'':Utilities.formatDate(ev.getEndTime(),tz,'HH:mm');
+    const title=ev.getTitle()||'Evento FotoGestor';
+    const location=ev.getLocation()||'';
+    const current={title:String(row[idx.title]||''),date:normalizeDate_(row[idx.date]),time:normalizeTime_(row[idx.time]),endDate:normalizeDate_(row[idx.endDate]||row[idx.date]),endTime:normalizeTime_(row[idx.endTime]||''),location:String(row[idx.location]||'')};
+    if(current.title===title && current.date===date && current.time===time && current.endDate===endDate && current.endTime===endTime && current.location===location) continue;
+    const fields={date:date,time:time,endDate:endDate,endTime:endTime,location:location,updatedAt:now};
+    Object.keys(fields).forEach(k=>{ if(idx[k]>=0) sh.getRange(i+1,idx[k]+1).setValue(fields[k]); });
+  }
 }
 
 function upsertCash_(sourceType, sourceId, tx){
