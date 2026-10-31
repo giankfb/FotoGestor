@@ -1340,6 +1340,16 @@ function ReportTable({ headers, rows, empty }) {
 }
 
 function AvailableDatesReport({ events, from, to }) {
+  const [selectedDays, setSelectedDays] = useState([5,6,0]);
+  const weekdays = [
+    [1,'Segunda-feira'], [2,'Terça-feira'], [3,'Quarta-feira'], [4,'Quinta-feira'],
+    [5,'Sexta-feira'], [6,'Sábado'], [0,'Domingo']
+  ];
+
+  const toggleDay = day => setSelectedDays(prev =>
+    prev.includes(day) ? prev.filter(x => x !== day) : [...prev, day]
+  );
+
   const occupied = new Set();
 
   // Considera todo o intervalo de um evento, inclusive eventos de vários dias.
@@ -1363,14 +1373,34 @@ function AvailableDatesReport({ events, from, to }) {
     const end=new Date(`${to}T12:00:00`);
     while(d<=end){
       const iso=localISODate(d);
-      // O relatório mostra somente datas realmente disponíveis.
-      if([5,6].includes(d.getDay()) && !occupied.has(iso)) {
-        dates.push({iso,weekday:d.getDay()===5?'Sexta-feira':'Sábado'});
+      // Mostra somente os dias da semana selecionados e que estejam livres.
+      if(selectedDays.includes(d.getDay()) && !occupied.has(iso)) {
+        dates.push({iso,weekday:weekdays.find(x=>x[0]===d.getDay())?.[1] || ''});
       }
-      d.setDate(d.getDate()+1);
+      d.setDate(d.getDate() + 1);
     }
   }
-  return <ReportTable headers={['Data','Dia']} rows={dates.map(x=>[formatDate(x.iso),x.weekday])} empty="Nenhuma sexta-feira ou sábado disponível no período." />;
+
+  return (
+    <>
+      <div className="available-days-filter">
+        <div className="available-days-title">Dias da semana</div>
+        <div className="available-days-options">
+          {weekdays.map(([day,label]) => (
+            <label className="check-row" key={day}>
+              <input type="checkbox" checked={selectedDays.includes(day)} onChange={() => toggleDay(day)} />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      <ReportTable
+        headers={['Data','Dia']}
+        rows={dates.map(x=>[formatDate(x.iso),x.weekday])}
+        empty="Nenhuma data disponível para os dias selecionados no período."
+      />
+    </>
+  );
 }
 
 function inRange(value, from, to) {
