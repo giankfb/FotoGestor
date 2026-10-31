@@ -75,7 +75,7 @@ const entities = {
       ['time', 'Horário inicial', 'time'],
       ['endDate', 'Data final', 'date'],
       ['endTime', 'Horário final', 'time'],
-      ['type', 'Tipo de evento', 'text'],
+      ['type', 'Tipo de evento', 'select'],
       ['location', 'Local', 'text'],
       ['value', 'Valor contratado (R$)', 'number'],
       ['status', 'Situação', 'select'],
