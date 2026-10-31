@@ -8,3 +8,6 @@
 /* Feedback visual de operações demoradas */
 .spin { animation: fg-spin .9s linear infinite; }
 @keyframes fg-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.report-client-filter{min-width:220px}.multi-check{position:relative}.multi-check summary{list-style:none;border:1px solid #e1e5ed;border-radius:8px;padding:10px 12px;background:white;color:#4b5563;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}.multi-check summary::-webkit-details-marker{display:none}.multi-check-menu{position:absolute;right:0;top:calc(100% + 5px);z-index:40;width:270px;max-height:270px;overflow:auto;background:white;border:1px solid #e1e5ed;border-radius:9px;padding:7px;box-shadow:0 12px 30px #11182718}.check-row{display:flex;align-items:center;gap:8px;padding:8px 7px;border-radius:6px;font-size:12px;font-weight:500;color:#4b5563;cursor:pointer}.check-row:hover{background:#f7f5ff}.check-row input{width:15px;height:15px;margin:0;accent-color:#8b5cf6}.check-all{border-bottom:1px solid #eceef4;margin-bottom:4px}.multi-check-empty{display:block;padding:10px 7px;color:#9aa1ae;font-size:11px}
+@media(max-width:760px){.report-client-filter{width:100%;min-width:0}.multi-check summary{max-width:none}.multi-check-menu{left:0;right:auto;width:min(100%,320px)}}

@@ -1171,6 +1171,7 @@ function PaymentModal({ account, receipts, type='receivable', close, save, remov
 }
 function Reports({ data, period, setPeriod }) {
   const [report, setReport] = useState('receivable');
+  const [selectedClients, setSelectedClients] = useState([]);
   const [from, setFrom] = useState(`${period}-01`);
   const [to, setTo] = useState(() => {
     const [y,m] = period.split('-').map(Number);
@@ -1197,8 +1198,13 @@ function Reports({ data, period, setPeriod }) {
     cash: 'Caixa'
   };
 
+  const clientNames = [...new Set((data.clients || [])
+    .map(x => String(x.name || '').trim())
+    .filter(Boolean))].sort((a,b) => a.localeCompare(b, 'pt-BR'));
+
   const events = (data.events || [])
     .filter(x => inPeriod(x.date))
+    .filter(x => !selectedClients.length || selectedClients.includes(String(x.clientName || '').trim()))
     .sort((a,b) => `${a.date} ${a.time||''}`.localeCompare(`${b.date} ${b.time||''}`));
 
   const receivables = (data.receivable || [])
@@ -1244,6 +1250,35 @@ function Reports({ data, period, setPeriod }) {
           <label className="field">Até
             <input className="period-input" type="date" value={to} onChange={e=>setTo(e.target.value)} />
           </label>
+          {report === 'agenda' && (
+            <div className="field report-client-filter">
+              <span>Clientes</span>
+              <details className="multi-check">
+                <summary>{selectedClients.length ? `${selectedClients.length} cliente(s) selecionado(s)` : 'Todos os clientes'}</summary>
+                <div className="multi-check-menu">
+                  <label className="check-row check-all">
+                    <input
+                      type="checkbox"
+                      checked={!selectedClients.length}
+                      onChange={() => setSelectedClients([])}
+                    />
+                    <b>Todos</b>
+                  </label>
+                  {clientNames.map(name => (
+                    <label className="check-row" key={name}>
+                      <input
+                        type="checkbox"
+                        checked={selectedClients.includes(name)}
+                        onChange={e => setSelectedClients(prev => e.target.checked ? [...prev, name] : prev.filter(x => x !== name))}
+                      />
+                      <span>{name}</span>
+                    </label>
+                  ))}
+                  {!clientNames.length && <small className="multi-check-empty">Nenhum cliente cadastrado.</small>}
+                </div>
+              </details>
+            </div>
+          )}
         </div>
       </div>
 
