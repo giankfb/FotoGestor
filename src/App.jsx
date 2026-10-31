@@ -15,6 +15,7 @@ const sections = [
   ['clients', 'Clientes', Users],
   ['suppliers', 'Fornecedores', Truck],
   ['services', 'Serviços e pacotes', BriefcaseBusiness],
+  ['eventTypes', 'Tipos de evento', CalendarClock],
   ['transactions', 'Caixa', Wallet],
   ['receivable', 'Contas a receber', ArrowDownToLine],
   ['payable', 'Contas a pagar', ArrowUpFromLine],
@@ -45,6 +46,13 @@ const entities = {
       ['email', 'E-mail', 'email'],
       ['document', 'CPF/CNPJ', 'text'],
       ['notes', 'Observações', 'textarea']
+    ]
+  },
+  eventTypes: {
+    title: 'Tipos de evento',
+    sheet: 'TiposEvento',
+    fields: [
+      ['name', 'Nome do tipo de evento', 'text', true]
     ]
   },
   services: {
@@ -135,6 +143,7 @@ const emptyData = () => ({
   clients: [],
   suppliers: [],
   services: [],
+  eventTypes: [],
   events: [],
   transactions: [],
   receivable: [],
@@ -778,6 +787,7 @@ function App() {
           entity={modal.entity}
           item={modal.item}
           clients={data.clients || []}
+          eventTypes={data.eventTypes || []}
           createClient={createClient}
           close={() => setModal(null)}
           save={save}
@@ -902,6 +912,7 @@ function RecordModal({
   close,
   save,
   clients = [],
+  eventTypes = [],
   createClient
 }) {
   const [form, setForm] = useState(() => ({
@@ -920,7 +931,7 @@ function RecordModal({
 
   const opts = {
     select: key => key === 'type'
-      ? ['Entrada', 'Saída']
+      ? (entity === 'events' ? eventTypes.map(x => String(x.name || '').trim()).filter(Boolean) : ['Entrada', 'Saída'])
       : key === 'method'
         ? ['Pix', 'Dinheiro', 'Cartão de crédito', 'Cartão de débito', 'Transferência', 'Outro']
         : key === 'status'
@@ -1114,6 +1125,9 @@ function RecordModal({
                   {opts.select(key).map(option => (
                     <option key={option} value={option}>{option}</option>
                   ))}
+                  {entity === 'events' && key === 'type' && form[key] && !opts.select(key).includes(form[key]) && (
+                    <option value={form[key]}>{form[key]} (tipo anterior)</option>
+                  )}
                 </select>
               ) : (
                 <input

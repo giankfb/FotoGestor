@@ -3,6 +3,7 @@ const SHEETS = {
   Clientes: ['id','name','phone','email','document','address','notes','createdAt','updatedAt'],
   Fornecedores: ['id','name','category','phone','email','document','notes','createdAt','updatedAt'],
   Servicos: ['id','name','category','price','description','createdAt','updatedAt'],
+  TiposEvento: ['id','name','createdAt','updatedAt'],
   Eventos: ['id','title','clientName','date','time','endDate','endTime','type','location','value','status','notes','googleEventId','googleCalendarId','createdAt','updatedAt'],
   Lancamentos: ['id','type','date','description','category','person','method','amount','status','sourceType','sourceId','createdAt','updatedAt'],
   ContasReceber: ['id','eventId','person','description','dueDate','amount','paid','method','status','createdAt','updatedAt'],
@@ -25,8 +26,15 @@ function doPost(e) {
       const item = body.data && body.data.item || {};
       const id = String(body.data && body.data.id || item.id || '');
       const sheetName = entitySheet_(entity);
-      if (action === 'delete') deleteRow_(sheetName,id);
-      else saveRow_(sheetName,item,action === 'update');
+      if (action === 'delete') {
+        if (entity === 'eventTypes') {
+          const types = readAll_().eventTypes || [];
+          const target = types.find(x => String(x.id) === String(id));
+          const used = target && (readAll_().events || []).some(ev => String(ev.type || '').trim().toLowerCase() === String(target.name || '').trim().toLowerCase());
+          if (used) throw new Error('Este tipo de evento já está sendo usado em um ou mais eventos e não pode ser excluído.');
+        }
+        deleteRow_(sheetName,id);
+      } else saveRow_(sheetName,item,action === 'update');
       return json_({ok:true,data:{id:item.id || id}});
     }
     return json_({ok:false,error:'Ação não reconhecida.'});
@@ -41,7 +49,7 @@ function setupFotoGestor() {
   const first=ss.getSheetByName('Sheet1');if(first)ss.deleteSheet(first);
   Logger.log('Planilha criada: '+ss.getUrl()); return ss.getUrl();
 }
-function entitySheet_(entity) { const map={clients:'Clientes',suppliers:'Fornecedores',services:'Servicos',events:'Eventos',transactions:'Lancamentos',receivable:'ContasReceber',payable:'ContasPagar',receipts:'Recebimentos',payments:'Pagamentos'}; const name=map[entity]; if(!name)throw new Error('Cadastro inválido.'); return name; }
+function entitySheet_(entity) { const map={clients:'Clientes',suppliers:'Fornecedores',services:'Servicos',events:'Eventos',eventTypes:'TiposEvento',transactions:'Lancamentos',receivable:'ContasReceber',payable:'ContasPagar',receipts:'Recebimentos',payments:'Pagamentos'}; const name=map[entity]; if(!name)throw new Error('Cadastro inválido.'); return name; }
 function ensureStructure_() {
   const ss=ss_();
   Object.keys(SHEETS).forEach(name=>{
@@ -97,7 +105,7 @@ function todayISO_(){ return Utilities.formatDate(new Date(), Session.getScriptT
 function readAll_() {
   ensureStructure_();
   const ss=ss_(),out={clients:[],suppliers:[],services:[],events:[],transactions:[],receivable:[],payable:[],receipts:[],settings:{}};
-  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable',Recebimentos:'receipts',Pagamentos:'payments'};
+  const map={Clientes:'clients',Fornecedores:'suppliers',Servicos:'services',Eventos:'events',TiposEvento:'eventTypes',Lancamentos:'transactions',ContasReceber:'receivable',ContasPagar:'payable',Recebimentos:'receipts',Pagamentos:'payments'};
   Object.keys(map).forEach(name=>{
     const sh=ss.getSheetByName(name); if(!sh) return;
     const range=sh.getDataRange();
