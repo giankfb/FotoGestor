@@ -9,19 +9,13 @@ import {
 } from 'lucide-react';
 import { API_URL } from './config';
 
-const sections = [
-  ['dashboard', 'Painel', LayoutDashboard],
-  ['events', 'Agenda', CalendarDays],
-  ['clients', 'Clientes', Users],
-  ['suppliers', 'Fornecedores', Truck],
-  ['services', 'Serviços e pacotes', BriefcaseBusiness],
-  ['eventTypes', 'Tipos de evento', CalendarClock],
-  ['transactions', 'Caixa', Wallet],
-  ['receivable', 'Contas a receber', ArrowDownToLine],
-  ['payable', 'Contas a pagar', ArrowUpFromLine],
-  ['reports', 'Relatórios', ChartNoAxesCombined],
-  ['settings', 'Configurações', Settings]
+const navGroups = [
+  { label: 'PRINCIPAL', items: [['dashboard', 'Painel', LayoutDashboard], ['events', 'Agenda', CalendarDays]] },
+  { label: 'CADASTROS', items: [['clients', 'Clientes', Users], ['suppliers', 'Fornecedores', Truck], ['services', 'Serviços e pacotes', BriefcaseBusiness], ['eventTypes', 'Tipos de evento', CalendarClock]] },
+  { label: 'LANÇAMENTOS', items: [['transactions', 'Caixa', Wallet], ['receivable', 'Contas a receber', ArrowDownToLine], ['payable', 'Contas a pagar', ArrowUpFromLine]] },
+  { label: 'OUTROS', items: [['reports', 'Relatórios', ChartNoAxesCombined], ['settings', 'Configurações', Settings]] }
 ];
+const sections = navGroups.flatMap(group => group.items);
 
 const entities = {
   clients: {
@@ -415,6 +409,14 @@ function App() {
     return newClient;
   };
 
+  const createEventType = async typeItem => {
+    const newType = { ...typeItem, id: crypto.randomUUID(), updatedAt: new Date().toISOString() };
+    await api('create', { entity: 'eventTypes', item: newType });
+    await refresh();
+    setNotice('Tipo de evento cadastrado com sucesso.');
+    return newType;
+  };
+
   const del = async (key, item) => {
     if (!confirm(`Excluir “${item.name || item.title || item.description || item.person || 'este registro'}”?`)) {
       return;
@@ -478,22 +480,16 @@ function App() {
         <div className="studio-label">ESTÚDIO</div>
 
         <nav>
-          {sections.map(([id, label, Icon]) => (
-            <button
-              key={id}
-              className={`nav-item ${active === id ? 'active' : ''}`}
-              onClick={() => {
-                setActive(id);
-                setSearch('');
-                setMobile(false);
-              }}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-              {id === 'events' && data.events?.length > 0 && (
-                <small>{data.events.length}</small>
-              )}
-            </button>
+          {navGroups.map(group => (
+            <div className="nav-group" key={group.label}>
+              <div className="nav-group-label">{group.label}</div>
+              {group.items.map(([id, label, Icon]) => (
+                <button key={id} className={`nav-item ${active === id ? 'active' : ''}`} onClick={() => { setActive(id); setSearch(''); setMobile(false); }}>
+                  <Icon size={18} /><span>{label}</span>
+                  {id === 'events' && data.events?.length > 0 && <small>{data.events.length}</small>}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -804,6 +800,7 @@ function App() {
           clients={data.clients || []}
           eventTypes={data.eventTypes || []}
           createClient={createClient}
+          createEventType={createEventType}
           onDelete={async item => { await del(modal.entity, item); setModal(null); }}
           close={() => setModal(null)}
           save={save}
@@ -1035,6 +1032,7 @@ function RecordModal({
   clients = [],
   eventTypes = [],
   createClient,
+  createEventType,
   onDelete
 }) {
   const [form, setForm] = useState(() => ({
@@ -1146,6 +1144,7 @@ function RecordModal({
 
               {entity === 'events' && key === 'clientName' ? (
                 <>
+                  <div className="field-inline-select">
                   <select
                     required={required}
                     value={form.clientId || ''}
@@ -1161,24 +1160,14 @@ function RecordModal({
                       <option value="__legacy__">{form.clientName} (cadastro anterior)</option>
                     )}
                   </select>
+                  <button type="button" className="inline-plus" title="Cadastrar cliente" onClick={() => { setShowNewClient(true); setClientError(''); }}>+</button>
+                  </div>
 
                   {form.clientName && !form.clientId && (
                     <small className="hint">
                       Cliente de um evento antigo. Selecione um cliente cadastrado para vincular.
                     </small>
                   )}
-
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={() => {
-                      setShowNewClient(value => !value);
-                      setClientError('');
-                    }}
-                  >
-                    <Plus size={15} />
-                    {showNewClient ? 'Cancelar novo cliente' : 'Novo cliente'}
-                  </button>
 
                   {showNewClient && (
                     <div className="panel">
@@ -1231,6 +1220,20 @@ function RecordModal({
                     </div>
                   )}
                 </>
+              ) : entity === 'events' && key === 'type' ? (
+                <div className="field-inline-select">
+                  <select required={required} value={form[key] || ''} onChange={e => handleFieldChange(key, e.target.value)}>
+                    <option value="">Selecione o tipo...</option>
+                    {opts.select(key).map(option => <option key={option} value={option}>{option}</option>)}
+                    {form[key] && !opts.select(key).includes(form[key]) && <option value={form[key]}>{form[key]} (tipo anterior)</option>}
+                  </select>
+                  <button type="button" className="inline-plus" title="Cadastrar tipo de evento" onClick={async () => {
+                    const name = window.prompt('Nome do novo tipo de evento:');
+                    if (!name || !name.trim() || !createEventType) return;
+                    try { const created = await createEventType({ name: name.trim() }); setForm(current => ({ ...current, type: created.name })); }
+                    catch (e) { alert(e.message || 'Não foi possível cadastrar o tipo.'); }
+                  }}>+</button>
+                </div>
               ) : type === 'textarea' ? (
                 <textarea
                   rows="3"

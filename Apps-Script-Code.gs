@@ -254,6 +254,22 @@ function deleteRow_(sheetName,id) {
   throw new Error('Registro não encontrado.');
 }
 
+function deleteGoogleCalendarEvent_(googleEventId, googleCalendarId){
+  if(!googleEventId) return;
+  try {
+    let cal = null;
+    if(googleCalendarId){
+      try { cal = CalendarApp.getCalendarById(String(googleCalendarId)); } catch(ignore) {}
+    }
+    if(!cal) cal = findEventosCalendar_();
+    const ev = cal.getEventById(String(googleEventId));
+    if(ev) ev.deleteEvent();
+  } catch(e) {
+    // O evento pode já ter sido excluído no Google ou a agenda pode estar indisponível.
+    // A exclusão no FotoGestor deve continuar normalmente.
+  }
+}
+
 function googleCalendarName_(){
   // Nome da agenda de trabalho: altere somente aqui se um dia quiser renomeá-la.
   return '02 EVENTOS';
