@@ -99,3 +99,11 @@ npm run build
 - Botão de importação mostra `Importando...`, fica bloqueado durante a operação e informa que os eventos estão sendo salvos.
 - A importação exibe o resultado com quantidade importada e quantidade ignorada.
 - O modal identifica a agenda como `02 EVENTOS`.
+
+
+## V17 — Performance
+- Agenda otimizada com índices locais por dia e por recebível, reduzindo varreduras repetidas ao renderizar o calendário.
+- Salvamentos, cadastros e exclusões usam atualização otimista da interface e confirmação silenciosa em segundo plano.
+- Após uma ação, a tela responde imediatamente em vez de aguardar uma nova leitura completa da planilha.
+- Modal de registro mostra `Salvando...` e bloqueia ações duplicadas durante a gravação.
+- A versão mantém o layout e as funcionalidades da V16.4.

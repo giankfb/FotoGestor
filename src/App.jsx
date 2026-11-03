@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Camera, LayoutDashboard, CalendarDays, Users, Truck,
   BriefcaseBusiness, Wallet, ArrowDownToLine, ArrowUpFromLine,
@@ -251,8 +251,8 @@ function App() {
   const [googleImporting, setGoogleImporting] = useState(false);
   const [calendarMode, setCalendarMode] = useState('calendar');
 
-  const refresh = async () => {
-    setLoading(true);
+  const refresh = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     setError('');
 
     try {
@@ -281,7 +281,7 @@ function App() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -346,9 +346,18 @@ function App() {
         });
       }
 
+      // Atualização otimista: a interface muda imediatamente, enquanto uma
+      // leitura silenciosa confirma os dados derivados (financeiro/Google) em segundo plano.
+      setData(current => {
+        const list = [...(current[key] || [])];
+        const index = list.findIndex(x => String(x.id) === String(next.id));
+        if (index >= 0) list[index] = { ...list[index], ...next };
+        else list.push(next);
+        return { ...current, [key]: list };
+      });
       setModal(null);
-      setNotice('Registro salvo.');
-      await refresh();
+      setNotice('Salvo.');
+      void refresh({ silent: true });
     } catch (e) {
       setError(e.message);
     }
@@ -361,14 +370,20 @@ function App() {
       const entity = payment.paymentType === 'payable' ? 'payments' : 'receipts';
       await api(isUpdate ? 'update' : 'create', { entity, item: next });
       setPaymentModal(null);
-      setNotice('Recebimento registrado.');
-      await refresh();
+      setNotice('Salvo.');
+      void refresh({ silent: true });
     } catch (e) { setError(e.message); }
   };
 
   const removePayment = async payment => {
     if (!confirm('Excluir este pagamento? O saldo da conta e o caixa serão recalculados.')) return;
-    try { await api('delete', { entity: payment.paymentType === 'payable' ? 'payments' : 'receipts', id: payment.id }); await refresh(); setNotice('Pagamento excluído.'); }
+    try {
+      const key = payment.paymentType === 'payable' ? 'payments' : 'receipts';
+      await api('delete', { entity: key, id: payment.id });
+      setData(current => ({ ...current, [key]: (current[key] || []).filter(x => String(x.id) !== String(payment.id)) }));
+      setNotice('Excluído.');
+      void refresh({ silent: true });
+    }
     catch (e) { setError(e.message); }
   };
 
@@ -404,16 +419,18 @@ function App() {
       item: newClient
     });
 
-    await refresh();
-    setNotice('Cliente cadastrado com sucesso.');
+    setData(current => ({ ...current, clients: [...(current.clients || []), newClient] }));
+    setNotice('Cliente cadastrado.');
+    void refresh({ silent: true });
     return newClient;
   };
 
   const createEventType = async typeItem => {
     const newType = { ...typeItem, id: crypto.randomUUID(), updatedAt: new Date().toISOString() };
     await api('create', { entity: 'eventTypes', item: newType });
-    await refresh();
-    setNotice('Tipo de evento cadastrado com sucesso.');
+    setData(current => ({ ...current, eventTypes: [...(current.eventTypes || []), newType] }));
+    setNotice('Tipo de evento cadastrado.');
+    void refresh({ silent: true });
     return newType;
   };
 
@@ -424,8 +441,9 @@ function App() {
 
     try {
       await api('delete', { entity: key, id: item.id });
-      await refresh();
-      setNotice('Registro excluído.');
+      setData(current => ({ ...current, [key]: (current[key] || []).filter(x => String(x.id) !== String(item.id)) }));
+      setNotice('Excluído.');
+      void refresh({ silent: true });
     } catch (e) {
       setError(e.message);
     }
@@ -849,10 +867,17 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
     return day > 0 && day <= last.getDate() ? localISODate(new Date(year, month, day)) : '';
   });
 
+  // Índices locais evitam varrer todos os eventos/recebimentos a cada célula do calendário.
+  const receivableByEvent = useMemo(() => {
+    const map = new Map();
+    receivables.forEach(r => map.set(String(r.eventId || ''), r));
+    return map;
+  }, [receivables]);
+
   const statusClass = event => {
     const status = String(event.status || '').toLowerCase();
     if (status.includes('cancel')) return 'cancelled';
-    const account = receivables.find(r => String(r.eventId || '') === String(event.id || ''));
+    const account = receivableByEvent.get(String(event.id || ''));
     const amount = Number(account?.amount ?? event.value ?? 0);
     const paid = Number(account?.paid ?? event.paid ?? 0);
     if (status.includes('pago') || (amount > 0 && paid >= amount)) return 'paid';
@@ -860,11 +885,37 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
     return 'pending';
   };
 
-  const eventsFor = date => events.filter(event => {
-    const start = normalizeDateValue(event.date);
-    const end = normalizeDateValue(event.endDate || event.date);
-    return start && date >= start && date <= (end || start);
-  }).sort((a,b) => String(a.time || '').localeCompare(String(b.time || '')));
+  const monthEvents = useMemo(() => {
+    const monthStart = localISODate(new Date(year, month, 1));
+    const monthEnd = localISODate(new Date(year, month + 1, 0));
+    return events.filter(e => {
+      const start = normalizeDateValue(e.date);
+      const end = normalizeDateValue(e.endDate || e.date);
+      return start && start <= monthEnd && (end || start) >= monthStart;
+    });
+  }, [events, year, month]);
+
+  const eventsByDay = useMemo(() => {
+    const map = new Map();
+    monthEvents.forEach(event => {
+      const start = normalizeDateValue(event.date);
+      const end = normalizeDateValue(event.endDate || event.date) || start;
+      if (!start) return;
+      let cursorDate = new Date(`${start}T12:00:00`);
+      const endDate = new Date(`${end}T12:00:00`);
+      for (let guard = 0; cursorDate <= endDate && guard < 370; guard++) {
+        const key = localISODate(cursorDate);
+        if (key.slice(0,7) === `${year}-${String(month+1).padStart(2,'0')}`) {
+          const list = map.get(key) || []; list.push(event); map.set(key, list);
+        }
+        cursorDate.setDate(cursorDate.getDate() + 1);
+      }
+    });
+    map.forEach(list => list.sort((a,b) => String(a.time || '').localeCompare(String(b.time || ''))));
+    return map;
+  }, [monthEvents, year, month]);
+
+  const eventsFor = date => eventsByDay.get(date) || [];
 
   const move = delta => setCursor(new Date(year, month + delta, 1));
   const goToday = () => { const [y,m] = currentMonth().split('-').map(Number); setCursor(new Date(y, m - 1, 1)); };
@@ -913,25 +964,13 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
         <small>Dê duplo clique em um dia para criar um evento.</small>
       </div>
     </> : <div className="calendar-list-view">
-      {events.filter(e => {
-        const start = normalizeDateValue(e.date);
-        const end = normalizeDateValue(e.endDate || e.date);
-        const monthStart = localISODate(new Date(year, month, 1));
-        const monthEnd = localISODate(new Date(year, month + 1, 0));
-        return start && start <= monthEnd && (end || start) >= monthStart;
-      }).sort((a,b) => `${normalizeDateValue(a.date)}${a.time||''}`.localeCompare(`${normalizeDateValue(b.date)}${b.time||''}`)).map(event => <button className="calendar-list-row" key={event.id} onClick={() => onEdit(event)}>
+      {monthEvents.slice().sort((a,b) => `${normalizeDateValue(a.date)}${a.time||''}`.localeCompare(`${normalizeDateValue(b.date)}${b.time||''}`)).map(event => <button className="calendar-list-row" key={event.id} onClick={() => onEdit(event)}>
         <div className={`calendar-list-status ${statusClass(event)}`}></div>
         <div className="calendar-list-date"><b>{formatDate(event.date)}</b><small>{formatTime(event.time) || 'Dia inteiro'}{event.endDate && normalizeDateValue(event.endDate) !== normalizeDateValue(event.date) ? ` → ${formatDate(event.endDate)}` : ''}</small></div>
         <div className="calendar-list-info"><strong>{event.title || event.type || 'Evento fotográfico'}</strong><span>{event.clientName || 'Cliente não informado'}{event.location ? ` · ${event.location}` : ''}</span></div>
         <div className="calendar-list-type">{event.type || 'Sem tipo'}</div>
       </button>)}
-      {!events.filter(e => {
-        const start = normalizeDateValue(e.date);
-        const end = normalizeDateValue(e.endDate || e.date);
-        const monthStart = localISODate(new Date(year, month, 1));
-        const monthEnd = localISODate(new Date(year, month + 1, 0));
-        return start && start <= monthEnd && (end || start) >= monthStart;
-      }).length && <Empty text="Nenhum evento neste mês."/>}
+      {!monthEvents.length && <Empty text="Nenhum evento neste mês."/>}
     </div>}
   </section>;
 }
@@ -1047,6 +1086,7 @@ function RecordModal({
   const [newClient, setNewClient] = useState({ name: '', phone: '', email: '' });
   const [savingClient, setSavingClient] = useState(false);
   const [clientError, setClientError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   if (!config) return null;
 
@@ -1127,7 +1167,8 @@ function RecordModal({
             }
           }
 
-          save(entity, payload);
+          setSaving(true);
+          Promise.resolve(save(entity, payload)).finally(() => setSaving(false));
         }}
       >
         <div className="modal-head">
@@ -1274,16 +1315,18 @@ function RecordModal({
             <button
               type="button"
               className="secondary-btn danger"
+              disabled={saving}
               onClick={async () => {
                 if (!confirm(`Excluir “${form.title || form.name || form.description || 'este registro'}”?`)) return;
-                await onDelete(form);
+                setSaving(true);
+                try { await onDelete(form); } finally { setSaving(false); }
               }}
             >
               <Trash2 size={15} /> Excluir
             </button>
           )}
-          <button type="button" className="secondary-btn" onClick={close}>Cancelar</button>
-          <button className="primary-btn" type="submit">Salvar registro</button>
+          <button type="button" className="secondary-btn" onClick={close} disabled={saving}>Cancelar</button>
+          <button className="primary-btn" type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar registro'}</button>
         </div>
       </form>
     </div>
