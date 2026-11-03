@@ -841,7 +841,7 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
   const monthName = cursor.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
   const first = new Date(year, month, 1);
   const last = new Date(year, month + 1, 0);
-  const startOffset = (first.getDay() + 6) % 7; // segunda = 0
+  const startOffset = first.getDay(); // domingo = 0
   const total = startOffset + last.getDate();
   const rows = Math.ceil(total / 7);
   const cells = Array.from({ length: rows * 7 }, (_, i) => {
@@ -887,7 +887,7 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
     </div>
 
     {mode === 'calendar' ? <>
-      <div className="calendar-weekdays">{['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(x => <div key={x}>{x}</div>)}</div>
+      <div className="calendar-weekdays">{['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map(x => <div key={x}>{x}</div>)}</div>
       <div className="calendar-grid">
         {cells.map((date, i) => {
           const dayEvents = date ? eventsFor(date) : [];
