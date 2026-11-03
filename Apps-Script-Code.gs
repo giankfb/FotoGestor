@@ -238,6 +238,24 @@ function syncReceivableFromReceipts_(receivableId) {
   }
 }
 function findRowById_(sheetName,id){ const sh=ss_().getSheetByName(sheetName); if(!sh||sh.getLastRow()<2)return -1; const vals=sh.getDataRange().getValues(); for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)) return i+1; return -1; }
+function deleteGoogleCalendarEvent_(googleEventId, googleCalendarId){
+  const gid=String(googleEventId||'').trim();
+  if(!gid) return;
+  try{
+    let cal=null;
+    if(googleCalendarId){
+      try { cal=CalendarApp.getCalendarById(String(googleCalendarId)); } catch(ignore) { cal=null; }
+    }
+    if(!cal) cal=googleCalendar_();
+    if(!cal) return;
+    const ev=cal.getEventById(gid);
+    if(ev) ev.deleteEvent();
+  }catch(e){
+    // A exclusão do evento no Google não deve impedir a exclusão do registro no FotoGestor.
+    console.log('Não foi possível excluir o evento no Google Calendar: '+e);
+  }
+}
+
 function deleteRow_(sheetName,id) {
   if(!id)throw new Error('Identificador ausente.');
   const sh=ss_().getSheetByName(sheetName);
