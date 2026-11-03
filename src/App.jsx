@@ -255,6 +255,7 @@ function App() {
   const [paymentModal, setPaymentModal] = useState(null);
   const [googleImportOpen, setGoogleImportOpen] = useState(false);
   const [googleImporting, setGoogleImporting] = useState(false);
+  const [calendarMode, setCalendarMode] = useState('calendar');
 
   const refresh = async () => {
     setLoading(true);
@@ -686,6 +687,18 @@ function App() {
 
               {entities[active] && (
                 <>
+                  {active === 'events' ? (
+                    <EventCalendar
+                      events={data.events || []}
+                      receivables={data.receivable || []}
+                      mode={calendarMode}
+                      setMode={setCalendarMode}
+                      onEdit={item => setModal({ entity: 'events', item })}
+                      onNew={date => setModal({ entity: 'events', item: { date, status: 'Confirmado' } })}
+                      onRefresh={refresh}
+                    />
+                  ) : null}
+                  {active !== 'events' && <>
                   <div className="list-toolbar">
                     <div className="searchbox">
                       <Search size={17} />
@@ -753,6 +766,7 @@ function App() {
                     )}
                   </div>
                   <p className="table-foot">{currentItems.length} registro(s) · Sincronização com Google Sheets{active === 'receivable' ? ' · Use o ícone 💰 para registrar cada pagamento' : ''}</p>
+                  </>}
                 </>
               )}
             </>
@@ -815,6 +829,99 @@ function Empty({ text }) {
       <p>{text}</p>
     </div>
   );
+}
+
+function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew, onRefresh }) {
+  const [cursor, setCursor] = useState(() => {
+    const [y,m] = currentMonth().split('-').map(Number);
+    return new Date(y, m - 1, 1);
+  });
+
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+  const monthName = cursor.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  const startOffset = (first.getDay() + 6) % 7; // segunda = 0
+  const total = startOffset + last.getDate();
+  const rows = Math.ceil(total / 7);
+  const cells = Array.from({ length: rows * 7 }, (_, i) => {
+    const day = i - startOffset + 1;
+    return day > 0 && day <= last.getDate() ? localISODate(new Date(year, month, day)) : '';
+  });
+
+  const statusClass = event => {
+    const status = String(event.status || '').toLowerCase();
+    if (status.includes('cancel')) return 'cancelled';
+    const account = receivables.find(r => String(r.eventId || '') === String(event.id || ''));
+    const amount = Number(account?.amount ?? event.value ?? 0);
+    const paid = Number(account?.paid ?? event.paid ?? 0);
+    if (status.includes('pago') || (amount > 0 && paid >= amount)) return 'paid';
+    if (status.includes('parcial') || paid > 0) return 'partial';
+    return 'pending';
+  };
+
+  const eventsFor = date => events.filter(event => {
+    const start = normalizeDateValue(event.date);
+    const end = normalizeDateValue(event.endDate || event.date);
+    return start && date >= start && date <= (end || start);
+  }).sort((a,b) => String(a.time || '').localeCompare(String(b.time || '')));
+
+  const move = delta => setCursor(new Date(year, month + delta, 1));
+  const goToday = () => { const [y,m] = currentMonth().split('-').map(Number); setCursor(new Date(y, m - 1, 1)); };
+
+  return <section className="calendar-shell">
+    <div className="calendar-toolbar">
+      <div className="calendar-nav">
+        <button className="secondary-btn calendar-today" onClick={goToday}>Hoje</button>
+        <button className="icon-btn" title="Mês anterior" onClick={() => move(-1)}>‹</button>
+        <button className="icon-btn" title="Próximo mês" onClick={() => move(1)}>›</button>
+        <h2>{monthName.charAt(0).toUpperCase() + monthName.slice(1)}</h2>
+      </div>
+      <div className="calendar-actions">
+        <div className="calendar-view-switch">
+          <button className={mode === 'calendar' ? 'active' : ''} onClick={() => setMode('calendar')}>Mês</button>
+          <button className={mode === 'list' ? 'active' : ''} onClick={() => setMode('list')}>Lista</button>
+        </div>
+        <button className="secondary-btn" onClick={onRefresh}><RefreshCw size={15}/> Atualizar</button>
+      </div>
+    </div>
+
+    {mode === 'calendar' ? <>
+      <div className="calendar-weekdays">{['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(x => <div key={x}>{x}</div>)}</div>
+      <div className="calendar-grid">
+        {cells.map((date, i) => {
+          const dayEvents = date ? eventsFor(date) : [];
+          const isToday = date === today();
+          return <div key={`${date || 'empty'}-${i}`} className={`calendar-day ${!date ? 'empty' : ''} ${isToday ? 'today' : ''}`} onDoubleClick={() => date && onNew(date)}>
+            {date && <button className="calendar-day-number" onClick={() => onNew(date)} title="Novo evento neste dia">{Number(date.slice(8,10))}</button>}
+            <div className="calendar-events">
+              {dayEvents.slice(0, 4).map(event => <button key={event.id} className={`calendar-event ${statusClass(event)}`} onClick={e => { e.stopPropagation(); onEdit(event); }} title={`${event.title || event.type || 'Evento'} · ${event.clientName || 'Cliente não informado'}`}>
+                <span className="calendar-event-time">{formatTime(event.time) || 'Dia inteiro'}</span>
+                <span>{event.title || event.type || 'Evento fotográfico'}</span>
+              </button>)}
+              {dayEvents.length > 4 && <span className="calendar-more">+{dayEvents.length - 4} mais</span>}
+            </div>
+          </div>;
+        })}
+      </div>
+      <div className="calendar-legend">
+        <span><i className="cal-dot pending"/>Pendente</span>
+        <span><i className="cal-dot partial"/>Parcial</span>
+        <span><i className="cal-dot paid"/>Pago</span>
+        <span><i className="cal-dot cancelled"/>Cancelado</span>
+        <small>Dê duplo clique em um dia para criar um evento.</small>
+      </div>
+    </> : <div className="calendar-list-view">
+      {events.filter(e => normalizeDateValue(e.date)).sort((a,b) => `${normalizeDateValue(a.date)}${a.time||''}`.localeCompare(`${normalizeDateValue(b.date)}${b.time||''}`)).map(event => <button className="calendar-list-row" key={event.id} onClick={() => onEdit(event)}>
+        <div className={`calendar-list-status ${statusClass(event)}`}></div>
+        <div className="calendar-list-date"><b>{formatDate(event.date)}</b><small>{formatTime(event.time) || 'Dia inteiro'}{event.endDate && normalizeDateValue(event.endDate) !== normalizeDateValue(event.date) ? ` → ${formatDate(event.endDate)}` : ''}</small></div>
+        <div className="calendar-list-info"><strong>{event.title || event.type || 'Evento fotográfico'}</strong><span>{event.clientName || 'Cliente não informado'}{event.location ? ` · ${event.location}` : ''}</span></div>
+        <div className="calendar-list-type">{event.type || 'Sem tipo'}</div>
+      </button>)}
+      {!events.length && <Empty text="Nenhum evento cadastrado ainda."/>}
+    </div>}
+  </section>;
 }
 
 function GoogleImportModal({ close, importEvents, importing=false }) {
