@@ -946,9 +946,9 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
           return <div key={`${date || 'empty'}-${i}`} className={`calendar-day ${!date ? 'empty' : ''} ${isToday ? 'today' : ''}`} onDoubleClick={() => date && onNew(date)}>
             {date && <button className="calendar-day-number" onClick={() => onNew(date)} title="Novo evento neste dia">{Number(date.slice(8,10))}</button>}
             <div className="calendar-events">
-              {dayEvents.slice(0, 4).map(event => <button key={event.id} className={`calendar-event ${statusClass(event)}`} onClick={e => { e.stopPropagation(); onEdit(event); }} title={`${event.title || event.type || 'Evento'} · ${event.clientName || 'Cliente não informado'}`}>
+              {dayEvents.slice(0, 4).map(event => <button key={event.id} className={`calendar-event ${statusClass(event)}`} onClick={e => { e.stopPropagation(); onEdit(event); }} title={`${event.clientName || 'Cliente não informado'} · ${event.type || event.title || 'Evento'}`}>
                 <span className="calendar-event-client">{event.clientName || 'Cliente não informado'}</span>
-                <span className="calendar-event-title">{event.title || event.type || 'Evento fotográfico'}</span>
+                <span className="calendar-event-title">{event.type || event.title || 'Evento fotográfico'}</span>
                 {formatTime(event.time) && <span className="calendar-event-time">{formatTime(event.time)}</span>}
               </button>)}
               {dayEvents.length > 4 && <span className="calendar-more">+{dayEvents.length - 4} mais</span>}
