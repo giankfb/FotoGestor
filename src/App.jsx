@@ -695,6 +695,7 @@ function App() {
                       setMode={setCalendarMode}
                       onEdit={item => setModal({ entity: 'events', item })}
                       onNew={date => setModal({ entity: 'events', item: { date, status: 'Confirmado' } })}
+                      onDelete={item => del('events', item)}
                       onRefresh={refresh}
                     />
                   ) : null}
@@ -803,6 +804,7 @@ function App() {
           clients={data.clients || []}
           eventTypes={data.eventTypes || []}
           createClient={createClient}
+          onDelete={async item => { await del(modal.entity, item); setModal(null); }}
           close={() => setModal(null)}
           save={save}
         />
@@ -831,7 +833,7 @@ function Empty({ text }) {
   );
 }
 
-function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew, onRefresh }) {
+function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew, onDelete, onRefresh }) {
   const [cursor, setCursor] = useState(() => {
     const [y,m] = currentMonth().split('-').map(Number);
     return new Date(y, m - 1, 1);
@@ -913,13 +915,25 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
         <small>Dê duplo clique em um dia para criar um evento.</small>
       </div>
     </> : <div className="calendar-list-view">
-      {events.filter(e => normalizeDateValue(e.date)).sort((a,b) => `${normalizeDateValue(a.date)}${a.time||''}`.localeCompare(`${normalizeDateValue(b.date)}${b.time||''}`)).map(event => <button className="calendar-list-row" key={event.id} onClick={() => onEdit(event)}>
+      {events.filter(e => {
+        const start = normalizeDateValue(e.date);
+        const end = normalizeDateValue(e.endDate || e.date);
+        const monthStart = localISODate(new Date(year, month, 1));
+        const monthEnd = localISODate(new Date(year, month + 1, 0));
+        return start && start <= monthEnd && (end || start) >= monthStart;
+      }).sort((a,b) => `${normalizeDateValue(a.date)}${a.time||''}`.localeCompare(`${normalizeDateValue(b.date)}${b.time||''}`)).map(event => <button className="calendar-list-row" key={event.id} onClick={() => onEdit(event)}>
         <div className={`calendar-list-status ${statusClass(event)}`}></div>
         <div className="calendar-list-date"><b>{formatDate(event.date)}</b><small>{formatTime(event.time) || 'Dia inteiro'}{event.endDate && normalizeDateValue(event.endDate) !== normalizeDateValue(event.date) ? ` → ${formatDate(event.endDate)}` : ''}</small></div>
         <div className="calendar-list-info"><strong>{event.title || event.type || 'Evento fotográfico'}</strong><span>{event.clientName || 'Cliente não informado'}{event.location ? ` · ${event.location}` : ''}</span></div>
         <div className="calendar-list-type">{event.type || 'Sem tipo'}</div>
       </button>)}
-      {!events.length && <Empty text="Nenhum evento cadastrado ainda."/>}
+      {!events.filter(e => {
+        const start = normalizeDateValue(e.date);
+        const end = normalizeDateValue(e.endDate || e.date);
+        const monthStart = localISODate(new Date(year, month, 1));
+        const monthEnd = localISODate(new Date(year, month + 1, 0));
+        return start && start <= monthEnd && (end || start) >= monthStart;
+      }).length && <Empty text="Nenhum evento neste mês."/>}
     </div>}
   </section>;
 }
@@ -1020,7 +1034,8 @@ function RecordModal({
   save,
   clients = [],
   eventTypes = [],
-  createClient
+  createClient,
+  onDelete
 }) {
   const [form, setForm] = useState(() => ({
     ...item,
@@ -1251,6 +1266,18 @@ function RecordModal({
         </div>
 
         <div className="modal-actions">
+          {item.id && onDelete && (
+            <button
+              type="button"
+              className="secondary-btn danger"
+              onClick={async () => {
+                if (!confirm(`Excluir “${form.title || form.name || form.description || 'este registro'}”?`)) return;
+                await onDelete(form);
+              }}
+            >
+              <Trash2 size={15} /> Excluir
+            </button>
+          )}
           <button type="button" className="secondary-btn" onClick={close}>Cancelar</button>
           <button className="primary-btn" type="submit">Salvar registro</button>
         </div>
