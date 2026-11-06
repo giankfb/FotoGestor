@@ -1,4 +1,4 @@
-const CACHE = 'fotogestor-v17-6';
+const CACHE = 'fotogestor-v17-7';
 
 self.addEventListener('install', event => {
   event.waitUntil(
