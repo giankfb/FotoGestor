@@ -83,7 +83,7 @@ const entities = {
       ['type', 'Movimento', 'select', true],
       ['date', 'Data', 'date', true],
       ['description', 'Descrição', 'text', true],
-      ['category', 'Categoria', 'text'],
+      ['category', 'Serviço / categoria', 'text'],
       ['person', 'Cliente / fornecedor', 'text'],
       ['method', 'Forma de pagamento', 'select'],
       ['amount', 'Valor (R$)', 'number', true],
@@ -823,6 +823,8 @@ function App() {
           entity={modal.entity}
           item={modal.item}
           clients={data.clients || []}
+          suppliers={data.suppliers || []}
+          services={data.services || []}
           eventTypes={data.eventTypes || []}
           createClient={createClient}
           createEventType={createEventType}
@@ -1081,6 +1083,8 @@ function RecordModal({
   close,
   save,
   clients = [],
+  suppliers = [],
+  services = [],
   eventTypes = [],
   createClient,
   createEventType,
@@ -1098,6 +1102,24 @@ function RecordModal({
   const [savingClient, setSavingClient] = useState(false);
   const [clientError, setClientError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const selectedPersonKey = (() => {
+    if (entity !== 'transactions') return '';
+    const value = String(form.person || '').trim().toLowerCase();
+    const client = clients.find(x => String(x.name || '').trim().toLowerCase() === value);
+    if (client) return `client:${client.id}`;
+    const supplier = suppliers.find(x => String(x.name || '').trim().toLowerCase() === value);
+    if (supplier) return `supplier:${supplier.id}`;
+    return value ? '__avulso__' : '';
+  })();
+
+  const selectedServiceId = (() => {
+    if (entity !== 'transactions') return '';
+    if (form.serviceId && services.some(x => String(x.id) === String(form.serviceId))) return String(form.serviceId);
+    const description = String(form.description || '').trim().toLowerCase();
+    const match = services.find(x => String(x.name || '').trim().toLowerCase() === description);
+    return match ? String(match.id) : '';
+  })();
 
   if (!config) return null;
 
@@ -1119,6 +1141,33 @@ function RecordModal({
         ...current,
         clientId: selected?.id || '',
         clientName: selected?.name || ''
+      }));
+      return;
+    }
+
+    if (entity === 'transactions' && key === 'person') {
+      if (value === '__avulso__') {
+        setForm(current => ({ ...current, personType: 'avulso', person: '' }));
+      } else if (value.startsWith('client:')) {
+        const selected = clients.find(x => String(x.id) === value.slice(7));
+        setForm(current => ({ ...current, personType: 'client', person: selected?.name || '' }));
+      } else if (value.startsWith('supplier:')) {
+        const selected = suppliers.find(x => String(x.id) === value.slice(9));
+        setForm(current => ({ ...current, personType: 'supplier', person: selected?.name || '' }));
+      } else {
+        setForm(current => ({ ...current, person: value }));
+      }
+      return;
+    }
+
+    if (entity === 'transactions' && key === 'serviceName') {
+      const selected = services.find(x => String(x.id) === value);
+      setForm(current => ({
+        ...current,
+        serviceId: selected?.id || '',
+        serviceName: selected?.name || '',
+        category: selected?.category || current.category || '',
+        description: selected?.name || current.description || ''
       }));
       return;
     }
@@ -1195,7 +1244,33 @@ function RecordModal({
             <label key={key} className={`field ${type === 'textarea' ? 'wide' : ''}`}>
               {label}
 
-              {entity === 'events' && key === 'clientName' ? (
+              {entity === 'transactions' && key === 'person' ? (
+                <>
+                  <select value={selectedPersonKey || ''} onChange={e => handleFieldChange('person', e.target.value)}>
+                    <option value="">Selecione uma pessoa...</option>
+                    <optgroup label="Clientes">
+                      {clients.map(client => <option key={`client:${client.id}`} value={`client:${client.id}`}>{client.name}</option>)}
+                    </optgroup>
+                    <optgroup label="Fornecedores">
+                      {suppliers.map(supplier => <option key={`supplier:${supplier.id}`} value={`supplier:${supplier.id}`}>{supplier.name}</option>)}
+                    </optgroup>
+                    <option value="__avulso__">Lançamento avulso</option>
+                  </select>
+                  {(form.personType === 'avulso' || (form.person && selectedPersonKey === '__avulso__')) && (
+                    <input style={{marginTop:6}} placeholder="Nome da pessoa / empresa" value={form.person || ''} onChange={e => setForm(current => ({...current, person:e.target.value, personType:'avulso'}))} />
+                  )}
+                  {!form.person && selectedPersonKey === '' && <small className="hint">Opcional: escolha um cliente, fornecedor ou deixe o lançamento avulso.</small>}
+                </>
+              ) : entity === 'transactions' && key === 'category' ? (
+                <>
+                  <select value={selectedServiceId} onChange={e => handleFieldChange('serviceName', e.target.value)}>
+                    <option value="">Selecionar serviço/pacote...</option>
+                    {services.map(service => <option key={service.id} value={service.id}>{service.name}{service.category ? ` · ${service.category}` : ''}</option>)}
+                  </select>
+                  <input style={{marginTop:6}} placeholder="Categoria do lançamento" value={form.category || ''} onChange={e => setForm(current => ({...current, category:e.target.value}))} />
+                  {!services.length && <small className="hint">Cadastre serviços e pacotes para poder selecioná-los aqui.</small>}
+                </>
+              ) : entity === 'events' && key === 'clientName' ? (
                 <>
                   <div className="field-inline-select">
                   <select
