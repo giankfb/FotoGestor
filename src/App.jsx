@@ -495,7 +495,7 @@ function App() {
     <div className="app-shell">
       <aside className={`sidebar ${mobile ? 'open' : ''}`}>
         <div className="brand">
-          <div className="brand-icon"><Camera size={23} /></div>
+          <div className="brand-logo"><img src="/fotogestor-logo.png" alt="FotoGestor" /></div>
           <div><b>FotoGestor</b><small>Gestão de fotografia</small></div>
           <button className="icon-btn mobile-close" onClick={() => setMobile(false)}>
             <X />
@@ -582,7 +582,7 @@ function App() {
               </div>
 
               <div className="stats-grid">
-                <Stat label="Eventos agendados" value={data.events?.filter(x => x.date >= today()).length || 0} icon={CalendarDays} tone="purple" foot="Eventos futuros" />
+                <Stat label="Eventos agendados" value={data.events?.length || 0} icon={CalendarDays} tone="purple" foot="Total de eventos" />
                 <Stat label="Clientes cadastrados" value={data.clients?.length || 0} icon={Users} tone="blue" foot="Base de clientes" />
                 <Stat label="A receber" value={money(pendingIn)} icon={ArrowDownToLine} tone="green" foot="Valores em aberto" />
                 <Stat label="A pagar" value={money(pendingOut)} icon={ArrowUpFromLine} tone="orange" foot="Despesas pendentes" />
