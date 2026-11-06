@@ -251,11 +251,18 @@ function App() {
   const [googleImporting, setGoogleImporting] = useState(false);
   const [calendarMode, setCalendarMode] = useState('calendar');
 
-  const refresh = async ({ silent = false } = {}) => {
+  const refresh = async ({ silent = false, googleStartDate = '', googleEndDate = '' } = {}) => {
     if (!silent) setLoading(true);
     setError('');
 
     try {
+      // Quando a Agenda solicita Atualizar, primeiro procura novos eventos na agenda 02 EVENTOS
+      // dentro do período visível e os importa automaticamente.
+      if (googleStartDate && googleEndDate) {
+        const google = await api('googleCalendarList', { startDate: googleStartDate, endDate: googleEndDate });
+        const ids = (google || []).filter(x => !x.imported).map(x => x.id).filter(Boolean);
+        if (ids.length) await api('googleCalendarImport', { ids });
+      }
       const result = await api('read');
       const normalized = { ...emptyData(), ...result };
       // Vincula automaticamente o cliente pelo nome para que o formulário de edição
@@ -710,7 +717,7 @@ function App() {
                       onEdit={item => setModal({ entity: 'events', item })}
                       onNew={date => setModal({ entity: 'events', item: { date, status: 'Confirmado' } })}
                       onDelete={item => del('events', item)}
-                      onRefresh={refresh}
+                      onRefresh={({ startDate, endDate } = {}) => refresh({ googleStartDate: startDate, googleEndDate: endDate })}
                     />
                   ) : null}
                   {active !== 'events' && <>
@@ -933,7 +940,11 @@ function EventCalendar({ events, receivables = [], mode, setMode, onEdit, onNew,
           <button className={mode === 'calendar' ? 'active' : ''} onClick={() => setMode('calendar')}>Mês</button>
           <button className={mode === 'list' ? 'active' : ''} onClick={() => setMode('list')}>Lista</button>
         </div>
-        <button className="secondary-btn" onClick={onRefresh}><RefreshCw size={15}/> Atualizar</button>
+        <button className="secondary-btn" onClick={() => {
+          const startDate = localISODate(new Date(year, month, 1));
+          const endDate = localISODate(new Date(year, month + 1, 0));
+          onRefresh({ startDate, endDate });
+        }}><RefreshCw size={15}/> Atualizar</button>
       </div>
     </div>
 
