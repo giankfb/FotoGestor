@@ -495,7 +495,7 @@ function App() {
     <div className="app-shell">
       <aside className={`sidebar ${mobile ? 'open' : ''}`}>
         <div className="brand">
-          <div className="brand-logo"><img src="/fotogestor-logo.png" alt="FotoGestor" /></div>
+          <div className="brand-logo"><img src={`${import.meta.env.BASE_URL}fotogestor-logo.png`} alt="FotoGestor" /></div>
           <div><b>FotoGestor</b><small>Gestão de fotografia</small></div>
           <button className="icon-btn mobile-close" onClick={() => setMobile(false)}>
             <X />
