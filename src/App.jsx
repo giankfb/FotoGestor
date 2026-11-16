@@ -72,7 +72,6 @@ const entities = {
       ['type', 'Tipo de evento', 'select'],
       ['location', 'Local', 'text'],
       ['value', 'Valor contratado (R$)', 'number'],
-      ['status', 'Situação', 'select'],
       ['notes', 'Observações', 'textarea']
     ]
   },
@@ -480,6 +479,8 @@ function App() {
 
   const currentItems = entities[active]
     ? (data[active] || [])
+        // Contas quitadas permanecem no histórico de recebimentos, mas saem da fila de cobrança.
+        .filter(x => active !== 'receivable' || Number(x.paid || 0) + 0.001 < Number(x.amount || 0))
         .filter(x => JSON.stringify(x).toLowerCase().includes(search.toLowerCase()))
         .sort((a, b) => {
           if (active !== 'events') return 0;
@@ -1129,7 +1130,7 @@ function RecordModal({
       : key === 'method'
         ? ['Pix', 'Dinheiro', 'Cartão de crédito', 'Cartão de débito', 'Transferência', 'Outro']
         : key === 'status'
-          ? ['Pendente', 'Vencida', 'Confirmado', 'Pago', 'Parcial', 'Cancelado']
+          ? (entity === 'events' ? ['Agendado', 'Confirmado', 'Cancelado'] : ['Pendente', 'Vencida', 'Confirmado', 'Pago', 'Parcial', 'Cancelado'])
           : []
   };
 
@@ -1489,6 +1490,7 @@ function Reports({ data, period, setPeriod }) {
     .sort((a,b) => `${a.date} ${a.time||''}`.localeCompare(`${b.date} ${b.time||''}`));
 
   const receivables = (data.receivable || [])
+    .filter(x => Number(x.paid || 0) + 0.001 < Number(x.amount || 0))
     .filter(x => inPeriod(x.dueDate))
     .sort((a,b) => String(a.dueDate||'').localeCompare(String(b.dueDate||'')));
 

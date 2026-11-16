@@ -90,6 +90,7 @@ function syncReceivableForEvent_(event) {
     return row>0?rows[row-1][idx[h]]:'';
   });
   if(row>0) sh.getRange(row,1,1,record.length).setValues([record]); else sh.appendRow(record);
+  syncEventPaymentStatus_(event.id, status);
 }
 
 function receiptsTotalFor_(receivableId) {
@@ -237,6 +238,27 @@ function syncReceivableFromReceipts_(receivableId) {
     return;
   }
 }
+function syncEventPaymentStatus_(eventId, status) {
+  // O status operacional da agenda é preservado; somente a quitação financeira
+  // pode marcar o evento como Pago.
+  if (!eventId || status !== 'Pago') return;
+  const sh = ss_().getSheetByName('Eventos');
+  if (!sh || sh.getLastRow() < 2) return;
+  const values = sh.getDataRange().getValues();
+  const headers = values[0].map(String);
+  const idCol = headers.indexOf('id');
+  const statusCol = headers.indexOf('status');
+  const updatedCol = headers.indexOf('updatedAt');
+  if (idCol < 0 || statusCol < 0) return;
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][idCol] || '') === String(eventId)) {
+      sh.getRange(i + 1, statusCol + 1).setValue(status);
+      if (updatedCol >= 0) sh.getRange(i + 1, updatedCol + 1).setValue(new Date());
+      return;
+    }
+  }
+}
+
 function findRowById_(sheetName,id){ const sh=ss_().getSheetByName(sheetName); if(!sh||sh.getLastRow()<2)return -1; const vals=sh.getDataRange().getValues(); for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)) return i+1; return -1; }
 function deleteRow_(sheetName,id) {
   if(!id)throw new Error('Identificador ausente.');
