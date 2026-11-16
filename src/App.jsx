@@ -143,6 +143,7 @@ const emptyData = () => ({
   receivable: [],
   payable: [],
   receipts: [],
+  payments: [],
   settings: { studioName: 'Meu Estúdio de Fotografia' }
 });
 
@@ -278,7 +279,7 @@ function App() {
       }));
       // Garante que datas vindas do Sheets tenham sempre o mesmo formato
       // usado pelos inputs HTML: yyyy-MM-dd.
-      for (const key of ['events', 'transactions', 'receivable', 'payable', 'receipts']) {
+      for (const key of ['events', 'transactions', 'receivable', 'payable', 'receipts', 'payments']) {
         normalized[key] = (normalized[key] || []).map(item => ({
           ...item,
           ...(item.date !== undefined ? { date: normalizeDateValue(item.date) } : {}),
@@ -480,8 +481,24 @@ function App() {
 
   const title = sections.find(s => s[0] === active)?.[1] || 'Painel';
 
+  // Contas quitadas permanecem na planilha e no histórico financeiro,
+  // mas não devem aparecer nas listas operacionais de contas em aberto.
+  // O saldo é conferido pelos lançamentos individuais e também pelo campo
+  // paid da conta, evitando exibir novamente uma conta já baixada.
   const currentItems = entities[active]
     ? (data[active] || [])
+        .filter(item => {
+          if (active !== 'receivable' && active !== 'payable') return true;
+          const isReceivable = active === 'receivable';
+          const paymentList = isReceivable ? (data.receipts || []) : (data.payments || []);
+          const referenceKey = isReceivable ? 'receivableId' : 'payableId';
+          const paidFromEntries = paymentList
+            .filter(payment => String(payment[referenceKey] || '') === String(item.id || ''))
+            .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+          const paid = Math.max(Number(item.paid || 0), paidFromEntries);
+          const total = Number(item.amount || 0);
+          return !(total > 0 && paid >= total - 0.01);
+        })
         .filter(x => JSON.stringify(x).toLowerCase().includes(search.toLowerCase()))
         .sort((a, b) => {
           if (active === 'events') {
