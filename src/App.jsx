@@ -254,6 +254,14 @@ function App() {
   const [googleImporting, setGoogleImporting] = useState(false);
   const [calendarMode, setCalendarMode] = useState('calendar');
 
+  // Avisos de sucesso desaparecem sozinhos após alguns segundos, mas continuam
+  // com o botão Fechar para quem quiser encerrá-los imediatamente.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(''), 2800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   const refresh = async ({ silent = false, googleStartDate = '', googleEndDate = '' } = {}) => {
     if (!silent) setLoading(true);
     setError('');
@@ -1613,17 +1621,20 @@ function Reports({ data, period, setPeriod }) {
       </div>
 
       <section className="panel report-sheet">
-        <div className="panel-head">
+        <div className="report-print-header">
+          <img src={`${import.meta.env.BASE_URL}fotogestor-logo.png`} alt="FotoGestor" />
           <div>
             <h2>FotoGestor</h2>
             <p>{printTitle} · {formatDate(from)} até {formatDate(to)}</p>
           </div>
+        </div>
+        <div className="report-actions">
           <button className="secondary-btn" onClick={()=>window.print()}>Imprimir / PDF</button>
         </div>
 
         {report === 'agenda' && (
-          <ReportTable headers={['Data','Horário','Evento','Cliente','Tipo','Local','Valor','Situação']} rows={events.map(x=>[
-            formatDate(x.date), formatTime(x.time)||'—', x.title||'—', x.clientName||'—', x.type||'—', x.location||'—', money(x.value), x.status||'—'
+          <ReportTable headers={['Data','Horário','Evento','Cliente','Tipo','Local','Situação']} rows={events.map(x=>[
+            formatDate(x.date), formatTime(x.time)||'—', x.title||'—', x.clientName||'—', x.type||'—', x.location||'—', x.status||'—'
           ])} empty="Nenhum evento no período." />
         )}
 
