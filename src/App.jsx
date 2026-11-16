@@ -72,6 +72,7 @@ const entities = {
       ['type', 'Tipo de evento', 'select'],
       ['location', 'Local', 'text'],
       ['value', 'Valor contratado (R$)', 'number'],
+      ['status', 'Situação', 'select'],
       ['notes', 'Observações', 'textarea']
     ]
   },
@@ -239,6 +240,8 @@ function App() {
   const [data, setData] = useState(emptyData);
   const [active, setActive] = useState('dashboard');
   const [search, setSearch] = useState('');
+  const [accountSort, setAccountSort] = useState('dueDate');
+  const [accountSortDirection, setAccountSortDirection] = useState('asc');
   const [modal, setModal] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -479,16 +482,27 @@ function App() {
 
   const currentItems = entities[active]
     ? (data[active] || [])
-        // Contas quitadas permanecem no histórico de recebimentos, mas saem da fila de cobrança.
-        .filter(x => active !== 'receivable' || Number(x.paid || 0) + 0.001 < Number(x.amount || 0))
         .filter(x => JSON.stringify(x).toLowerCase().includes(search.toLowerCase()))
         .sort((a, b) => {
-          if (active !== 'events') return 0;
-          const ad = normalizeDateValue(a.date || '');
-          const bd = normalizeDateValue(b.date || '');
-          const byDate = ad.localeCompare(bd);
-          if (byDate !== 0) return byDate;
-          return String(a.time || '').localeCompare(String(b.time || ''));
+          if (active === 'events') {
+            const ad = normalizeDateValue(a.date || '');
+            const bd = normalizeDateValue(b.date || '');
+            const byDate = ad.localeCompare(bd);
+            return byDate || String(a.time || '').localeCompare(String(b.time || ''));
+          }
+          if (active !== 'receivable' && active !== 'payable') return 0;
+          const valueFor = item => {
+            if (accountSort === 'event') {
+              const event = (data.events || []).find(e => String(e.id) === String(item.eventId));
+              return event ? `${normalizeDateValue(event.date || '')} ${event.title || ''}` : (item.description || '');
+            }
+            if (accountSort === 'person' || accountSort === 'description' || accountSort === 'status') return String(item[accountSort] || '').toLocaleLowerCase('pt-BR');
+            if (accountSort === 'amount' || accountSort === 'balance') return accountSort === 'balance' ? Number(item.amount || 0) - Number(item.paid || 0) : Number(item.amount || 0);
+            return normalizeDateValue(item[accountSort] || '');
+          };
+          const av = valueFor(a), bv = valueFor(b);
+          let result = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv), 'pt-BR', { numeric: true, sensitivity: 'base' });
+          return accountSortDirection === 'desc' ? -result : result;
         })
     : [];
 
@@ -731,6 +745,23 @@ function App() {
                         onChange={e => setSearch(e.target.value)}
                       />
                     </div>
+                    {(active === 'receivable' || active === 'payable') && (
+                      <div className="account-sort-controls">
+                        <label htmlFor="account-sort">Ordenar por</label>
+                        <select id="account-sort" value={accountSort} onChange={e => setAccountSort(e.target.value)}>
+                          <option value="event">Evento</option>
+                          <option value="person">Nome {active === 'receivable' ? 'do cliente' : 'do fornecedor'}</option>
+                          <option value="description">Descrição</option>
+                          <option value="dueDate">Vencimento</option>
+                          <option value="amount">Valor total</option>
+                          <option value="balance">Saldo restante</option>
+                          <option value="status">Situação</option>
+                        </select>
+                        <button className="secondary-btn sort-direction" title={accountSortDirection === 'asc' ? 'Ordem crescente' : 'Ordem decrescente'} onClick={() => setAccountSortDirection(d => d === 'asc' ? 'desc' : 'asc')}>
+                          {accountSortDirection === 'asc' ? 'A–Z / ↑' : 'Z–A / ↓'}
+                        </button>
+                      </div>
+                    )}
                     <button className="secondary-btn" onClick={refresh}>
                       <RefreshCw size={15} /> Atualizar
                     </button>
@@ -1130,7 +1161,7 @@ function RecordModal({
       : key === 'method'
         ? ['Pix', 'Dinheiro', 'Cartão de crédito', 'Cartão de débito', 'Transferência', 'Outro']
         : key === 'status'
-          ? (entity === 'events' ? ['Agendado', 'Confirmado', 'Cancelado'] : ['Pendente', 'Vencida', 'Confirmado', 'Pago', 'Parcial', 'Cancelado'])
+          ? ['Pendente', 'Vencida', 'Confirmado', 'Pago', 'Parcial', 'Cancelado']
           : []
   };
 
@@ -1490,7 +1521,6 @@ function Reports({ data, period, setPeriod }) {
     .sort((a,b) => `${a.date} ${a.time||''}`.localeCompare(`${b.date} ${b.time||''}`));
 
   const receivables = (data.receivable || [])
-    .filter(x => Number(x.paid || 0) + 0.001 < Number(x.amount || 0))
     .filter(x => inPeriod(x.dueDate))
     .sort((a,b) => String(a.dueDate||'').localeCompare(String(b.dueDate||'')));
 
