@@ -245,13 +245,42 @@ function deleteRow_(sheetName,id) {
   const vals=sh.getDataRange().getValues(), headers=vals[0].map(String);
   for(let i=1;i<vals.length;i++) if(String(vals[i][0])===String(id)){
     const deleted=headers.reduce((o,h,j)=>(o[h]=vals[i][j],o),{});
-    if(sheetName==='Eventos') deleteGoogleCalendarEvent_(deleted.googleEventId, deleted.googleCalendarId);
+    if(sheetName==='Eventos') {
+      deleteGoogleCalendarEvent_(deleted.googleEventId, deleted.googleCalendarId);
+      // Ao excluir um evento, remove também a conta a receber vinculada
+      // quando ainda não houve nenhum recebimento. Se já houve entrada,
+      // a conta permanece para preservar a auditoria financeira.
+      deleteReceivableForEvent_(deleted.id);
+    }
     sh.deleteRow(i+1);
     if(sheetName==='Recebimentos'){syncReceivableFromReceipts_(deleted.receivableId); deleteCashBySource_('receivable', id);}
     if(sheetName==='Pagamentos'){syncPayableFromPayments_(deleted.payableId); deleteCashBySource_('payable', id);}
     return;
   }
   throw new Error('Registro não encontrado.');
+}
+
+function deleteReceivableForEvent_(eventId){
+  if(!eventId) return;
+  const sh=ss_().getSheetByName('ContasReceber');
+  if(!sh || sh.getLastRow()<2) return;
+  const vals=sh.getDataRange().getValues();
+  const headers=vals[0].map(String);
+  const eventCol=headers.indexOf('eventId');
+  const idCol=headers.indexOf('id');
+  const paidCol=headers.indexOf('paid');
+  if(eventCol<0 || idCol<0) return;
+
+  for(let i=1;i<vals.length;i++){
+    if(String(vals[i][eventCol]||'')!==String(eventId)) continue;
+    const receivableId=String(vals[i][idCol]||'');
+    const receipts=receiptsTotalFor_(receivableId);
+    const paid=paidCol>=0 ? Number(vals[i][paidCol]||0) : receipts;
+    // Sem qualquer entrada: a conta não precisa permanecer após excluir o evento.
+    // Com entrada: mantém a conta para preservar a auditoria dos recebimentos.
+    if(receipts<=0 && paid<=0) sh.deleteRow(i+1);
+    return;
+  }
 }
 
 function deleteGoogleCalendarEvent_(googleEventId, googleCalendarId){
