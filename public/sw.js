@@ -1,4 +1,4 @@
-const CACHE = 'fotogestor-v17-8';
+const CACHE = 'fotogestor-v17-11';
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -26,6 +26,24 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
+  // Navegação deve buscar a versão atual primeiro. Isso evita que uma versão
+  // antiga do app seja exibida em branco após uma publicação no GitHub Pages.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE).then(cache => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then(cached => cached || caches.match(self.registration.scope)))
+    );
+    return;
+  }
+
+  // Arquivos do aplicativo continuam usando cache para abrir rapidamente.
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
@@ -35,7 +53,7 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE).then(cache => cache.put(event.request, copy));
         }
         return response;
-      }).catch(() => caches.match(self.registration.scope));
+      });
     })
   );
 });
