@@ -1547,6 +1547,9 @@ function Reports({ data, period, setPeriod }) {
 
   const receivables = (data.receivable || [])
     .filter(x => inPeriod(x.dueDate))
+    // No relatório de contas a receber entram somente contas ainda em aberto.
+    // Contas totalmente pagas não devem aparecer.
+    .filter(x => Number(x.amount || 0) > Number(x.paid || 0))
     .sort((a,b) => String(a.dueDate||'').localeCompare(String(b.dueDate||'')));
 
   const payables = (data.payable || [])
